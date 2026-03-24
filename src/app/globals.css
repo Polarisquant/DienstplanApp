@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rota-header: #4472c4;
+  --rota-rail: #d9d9d9;
+  --rota-border: #404040;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* Abrechnung & Druck: Steuerung ausblenden */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+  }
+}

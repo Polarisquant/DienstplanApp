@@ -1,0 +1,123 @@
+// Single-Tenant Dienstplan-Tool
+// Standard: PostgreSQL (lokal via Docker, in der Cloud z. B. Neon / Supabase / Railway)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum EmployeeSite {
+  CRUSH
+  CAPPUCONE
+  SHARED
+}
+
+model Employee {
+  id                     String       @id @default(cuid())
+  name                   String
+  /// Crush, CappuCone oder beide Standorte (im Dienstplan beider Filialen sichtbar)
+  workSite               EmployeeSite @default(SHARED)
+  contractHoursPerWeek   Float
+  workDaysPerWeek        Int
+  startBalanceHours      Float        @default(0)
+  vacationDaysOpen       Float        @default(0)
+  holidayRegion          String       @default("AT-Salzburg")
+  active                 Boolean      @default(true)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  shiftCells        ShiftCell[]
+  timeAccountLines  TimeAccountLine[]
+}
+
+enum WeekStatus {
+  DRAFT
+  CLOSED
+}
+
+enum WorkSite {
+  CRUSH
+  CAPPUCONE
+}
+
+model WorkWeek {
+  id         String     @id @default(cuid())
+  weekStart  DateTime
+  site       WorkSite   @default(CRUSH)
+  status     WeekStatus @default(DRAFT)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  shiftCells       ShiftCell[]
+  timeAccountLines TimeAccountLine[]
+
+  @@unique([weekStart, site])
+}
+
+enum ShiftLayer {
+  PLAN
+  ACTUAL
+}
+
+model ShiftCell {
+  id          String     @id @default(cuid())
+  workWeekId  String
+  employeeId  String
+  dayIndex    Int
+  layer       ShiftLayer
+  rawValue    String     @default("")
+  /// Freitext pro Schicht (z. B. Tätigkeit); unabhängig von Zeit-Parsing
+  note        String     @default("")
+
+  workWeek WorkWeek @relation(fields: [workWeekId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workWeekId, employeeId, dayIndex, layer])
+  @@index([workWeekId, employeeId])
+}
+
+model TimeAccountLine {
+  id               String   @id @default(cuid())
+  employeeId       String
+  workWeekId       String
+  weeklyDeltaHours Float
+  balanceAfter     Float
+  source           String   @default("IST_CLOSED")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  workWeek WorkWeek @relation(fields: [workWeekId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([employeeId, workWeekId])
+  @@index([employeeId])
+}
+
+model Holiday {
+  id              String   @id @default(cuid())
+  date            DateTime
+  name            String
+  region          String
+  /// Von der Organisation aktiviert – nur diese erscheinen im Dienstplan
+  includedInPlan  Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([date, region])
+  @@index([region])
+  @@index([includedInPlan])
+}

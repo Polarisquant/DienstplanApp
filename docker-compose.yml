@@ -1,0 +1,19 @@
+# Lokale PostgreSQL für Entwicklung (wie Produktion)
+# Start: docker compose up -d
+# Dann: npx prisma db push && npx prisma db seed
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dienstplan
+    ports:
+      - "5432:5432"
+    volumes:
+      - dienstplan_pgdata:/var/lib/postgresql/data
+
+volumes:
+  dienstplan_pgdata:
