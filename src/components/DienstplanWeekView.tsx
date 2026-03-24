@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDaysISO, defaultWeekStartISO } from "@/lib/dateNav";
+import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
 import { computeWeeklyBalance } from "@/lib/computeWeekly";
 
 type Layer = "PLAN" | "ACTUAL";
@@ -39,8 +40,8 @@ type RowDTO = {
   errorsActual: string[];
   balanceBeforeWeek: number;
   zagPreview: number;
-  laborHintsPlan: LaborHint[];
-  laborHintsActual: LaborHint[];
+  prevSundayPlan: string | null;
+  prevSundayActual: string | null;
 };
 
 type DayMeta = {
@@ -98,6 +99,7 @@ export function DienstplanWeekView() {
   const [importingPrevWeek, setImportingPrevWeek] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [laborOpenEmp, setLaborOpenEmp] = useState<string | null>(null);
+  const saveInFlightRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -345,7 +347,8 @@ export function DienstplanWeekView() {
   }
 
   async function save() {
-    if (!data) return;
+    if (!data || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     setSaving(true);
     setMsg(null);
     const cells: {
@@ -381,14 +384,22 @@ export function DienstplanWeekView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ start: weekStart, site: workSite, cells }),
       });
-      const j = await res.json().catch(() => ({}));
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        setMsg(j.error ?? "Speichern fehlgeschlagen.");
+        const apiErr = j.error?.trim();
+        setMsg(
+          apiErr && apiErr.length > 0
+            ? apiErr
+            : res.status === 401
+              ? "Sitzung ungültig — bitte neu anmelden."
+              : `Speichern fehlgeschlagen (HTTP ${res.status}).`
+        );
         return;
       }
       setMsg("Gespeichert.");
       await load();
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   }
@@ -454,19 +465,52 @@ export function DienstplanWeekView() {
 
   const readOnly = data?.status === "CLOSED";
 
+  const weekDatesISO = useMemo(
+    () =>
+      data?.days.length === 7 ? data.days.map((d) => d.dateISO) : [],
+    [data?.days]
+  );
+
+  const liveLaborByEmp = useMemo(() => {
+    const m = new Map<
+      string,
+      { plan: LaborHint[]; actual: LaborHint[] }
+    >();
+    if (!data || weekDatesISO.length !== 7) return m;
+    for (const r of data.rows) {
+      const g = grid[r.employee.id];
+      const plan = g?.plan ?? r.plan;
+      const actual = g?.actual ?? r.actual;
+      m.set(r.employee.id, {
+        plan: austrianLaborHintsForWeek(
+          weekDatesISO,
+          plan,
+          r.prevSundayPlan ?? null
+        ),
+        actual: austrianLaborHintsForWeek(
+          weekDatesISO,
+          actual,
+          r.prevSundayActual ?? null
+        ),
+      });
+    }
+    return m;
+  }, [data, grid, weekDatesISO]);
+
   const laborSummary = useMemo(() => {
     if (!data) return { warnings: 0, byEmp: new Map<string, number>() };
     let warnings = 0;
     const byEmp = new Map<string, number>();
     for (const r of data.rows) {
+      const live = liveLaborByEmp.get(r.employee.id);
       const hints =
-        layer === "PLAN" ? r.laborHintsPlan : r.laborHintsActual;
+        layer === "PLAN" ? (live?.plan ?? []) : (live?.actual ?? []);
       const w = hints.filter((h) => h.severity === "warning").length;
       byEmp.set(r.employee.id, w);
       warnings += w;
     }
     return { warnings, byEmp };
-  }, [data, layer]);
+  }, [data, layer, liveLaborByEmp]);
 
   const shellBg =
     workSite === "CRUSH"
@@ -739,7 +783,11 @@ export function DienstplanWeekView() {
                   const siteHint =
                     r.employee.workSite === "SHARED" ? " · geteilt" : "";
                   const label = `${r.employee.name}${siteHint} (${fmt.format(r.employee.contractHoursPerWeek)}/${r.employee.workDaysPerWeek}T)`;
-                  const hints = layer === "PLAN" ? r.laborHintsPlan : r.laborHintsActual;
+                  const liveH = liveLaborByEmp.get(r.employee.id);
+                  const hints =
+                    layer === "PLAN"
+                      ? (liveH?.plan ?? [])
+                      : (liveH?.actual ?? []);
                   const warnN = hints.filter((h) => h.severity === "warning").length;
                   const laborExpanded = laborOpenEmp === r.employee.id;
 
@@ -811,8 +859,11 @@ export function DienstplanWeekView() {
               {data.rows
                 .filter((r) => laborOpenEmp === r.employee.id)
                 .map((r) => {
+                  const liveH = liveLaborByEmp.get(r.employee.id);
                   const hints =
-                    layer === "PLAN" ? r.laborHintsPlan : r.laborHintsActual;
+                    layer === "PLAN"
+                      ? (liveH?.plan ?? [])
+                      : (liveH?.actual ?? []);
                   return (
                     <div key={r.employee.id}>
                       <p className="font-semibold">{r.employee.name}</p>

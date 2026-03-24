@@ -39,6 +39,25 @@ Browser: [http://localhost:3000](http://localhost:3000) — Login mit `PLANNER_P
 
 Nach Schema-Updates: `npx prisma db push` und ggf. `npx prisma db seed`.
 
+## Änderungen lokal ansehen (Step-by-Step)
+
+So siehst du Code-Änderungen **auf deinem Mac**, bevor du nach GitHub / Vercel pushst:
+
+| Schritt | Was du tust |
+|--------|----------------|
+| **1** | **Terminal** öffnen. |
+| **2** | In den App-Ordner wechseln: `cd "/Pfad/zu/deinem/Projekt/web"` (Ordner mit `package.json`). |
+| **3** | *(Optional, wenn du aus GitHub arbeitest)* Neuesten Stand holen: `git pull`. |
+| **4** | *(Nur nach frischem Clone oder wenn sich Abhängigkeiten geändert haben)* `npm install`. |
+| **5** | Sicherstellen, dass **`web/.env`** existiert und **`DATABASE_URL`**, **`SESSION_SECRET`** (≥16 Zeichen), **`PLANNER_PASSWORD`** gesetzt sind (wie bei der ersten Einrichtung — oder dieselbe **Neon**-URL wie in Produktion, wenn du gegen die Cloud-DB testen willst). |
+| **6** | *(Nur wenn sich `prisma/schema.prisma` geändert hat)* `npx prisma db push` (und ggf. `npx prisma db seed`). |
+| **7** | Entwicklungsserver starten: **`npm run dev`**. |
+| **8** | Im Browser öffnen: **http://localhost:3000** — mit dem Passwort aus `PLANNER_PASSWORD` anmelden. |
+| **9** | **Code ändern** (z. B. in Cursor): Dateien unter `web/src/…` speichern. Next.js **lädt die Seite meist automatisch neu** (Hot Reload). |
+| **10** | Wenn etwas „hängt“ oder alt aussieht: im Browser **hart neu laden** (`Cmd+Shift+R`) oder Dev-Server mit `Ctrl+C` beenden und **`npm run dev`** erneut starten. Bei seltsamen Build-Fehlern: Ordner **`web/.next`** löschen, dann wieder `npm run dev`. |
+
+**Kurz:** Einmal `.env` + DB + `npm install`/`db push` wie oben — danach für den Alltag meist nur: **`cd web` → `npm run dev` → http://localhost:3000**.
+
 ## Feiertage (zentrale Auswahl)
 
 - Menü **Feiertage** oder `/feiertage`

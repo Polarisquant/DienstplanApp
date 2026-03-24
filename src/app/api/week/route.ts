@@ -11,7 +11,6 @@ import {
 import { computeWeeklyBalance } from "@/lib/computeWeekly";
 import { getBalanceBeforeWeek } from "@/lib/balance";
 import { countVacationDaysInWeek } from "@/lib/vacation";
-import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
 import { LABOR_LAW_DISCLAIMER_DE } from "@/lib/laborLawConfig";
 import {
   employeeWhereForWorkSite,
@@ -146,16 +145,6 @@ export async function GET(req: Request) {
       );
       const base = await getBalanceBeforeWeek(e.id, start, site);
       const zagPreview = base + wsAct.deltaVsContract;
-      const laborHintsPlan = austrianLaborHintsForWeek(
-        weekDatesISO,
-        plan,
-        prevSundayByEmpPlan.get(e.id) ?? null
-      );
-      const laborHintsActual = austrianLaborHintsForWeek(
-        weekDatesISO,
-        actual,
-        prevSundayByEmpActual.get(e.id) ?? null
-      );
       return {
         employee: {
           id: e.id,
@@ -175,8 +164,9 @@ export async function GET(req: Request) {
         errorsActual: wsAct.errors,
         balanceBeforeWeek: base,
         zagPreview,
-        laborHintsPlan,
-        laborHintsActual,
+        /** Für Ruhezeit So→Mo: Sonntag Vorwoche (Client berechnet Hinweise live aus Grid) */
+        prevSundayPlan: prevSundayByEmpPlan.get(e.id) ?? null,
+        prevSundayActual: prevSundayByEmpActual.get(e.id) ?? null,
       };
     })
   );
