@@ -1,6 +1,6 @@
 # Dienstplan Web (MVP)
 
-Next.js-App: **ein Planer-Login**, Wochenraster **Plan | Ist** inkl. **Notizen pro Tag**, zentrale **Feiertags-Rubrik** (`/feiertage`), **Mitarbeiter** (`/mitarbeiter`), **Abrechnungsübersicht** (`/abrechnung`), **AT-Arbeitszeit-Hinweise** (heuristisch), **Speichern**, **Woche abschließen** (Zeitkonto), Urlaub **o. U.** bei **U** in der Ist-Zeile.
+Next.js-App: **ein Planer-Login**, Wochenraster **Plan | Ist** inkl. **Notizen pro Tag**, zentrale Rubrik **Feiertage & Ferien** (`/feiertage`, inkl. Schulferien AT-Salzburg / DE-Bayern), **Mitarbeiter** (`/mitarbeiter`), **Abrechnungsübersicht** (`/abrechnung`), **AT-Arbeitszeit-Hinweise** (heuristisch), **Speichern**, **Woche abschließen** (Zeitkonto), Urlaub **o. U.** bei **U** in der Ist-Zeile.
 
 **Öffentlich per Link** (wie Streamlit Cloud): App auf **Vercel / Railway / Render** deployen, **PostgreSQL** (z. B. Neon) und Umgebungsvariablen setzen — Schritt-für-Schritt: **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
@@ -58,11 +58,12 @@ So siehst du Code-Änderungen **auf deinem Mac**, bevor du nach GitHub / Vercel 
 
 **Kurz:** Einmal `.env` + DB + `npm install`/`db push` wie oben — danach für den Alltag meist nur: **`cd web` → `npm run dev` → http://localhost:3000**.
 
-## Feiertage (zentrale Auswahl)
+## Feiertage & Ferien (zentrale Auswahl)
 
-- Menü **Feiertage** oder `/feiertage`
-- Katalog **AT-Salzburg** und **DE-Bayern** (gesetzlich, **2024–2033**) via Seed: [`prisma/holidaysSeed.ts`](./prisma/holidaysSeed.ts) (`date-holidays`, nur `public`)
-- Nur **„Im Dienstplan“** angehakte Einträge erscheinen im Raster (Kopfzeile + Badge)
+- Menü **Feiertage & Ferien** oder `/feiertage`
+- **Feiertage:** **AT-Salzburg** und **DE-Bayern** (gesetzlich, **2024–2033**) via Seed: [`prisma/holidaysSeed.ts`](./prisma/holidaysSeed.ts) (`date-holidays`, nur `public`)
+- **Schulferien:** Zeiträume im Seed [`prisma/schoolBreaksSeed.ts`](./prisma/schoolBreaksSeed.ts) — offizielle Termine vor Produktivbetrieb prüfen
+- Nur **„Im Dienstplan“** angehakte Einträge erscheinen im Raster (Kopfzeile + Badge; Ferien: erster/letzter Tag stärker markiert als Tage dazwischen)
 
 ## Abrechnungsübersicht
 

@@ -51,13 +51,13 @@ export function austrianLaborHintsForWeek(
     }
 
     if (
-      b.grossHours >= cfg.pauseRequiredFromGrossHours &&
+      b.grossHours > cfg.pauseRequiredAboveGrossHours &&
       b.breakMinutes < cfg.minPauseMinutes
     ) {
       hints.push({
         code: "PAUSE",
         severity: "warning",
-        message: `Tag ${i + 1} (${dateISO}): Bei ≥ ${cfg.pauseRequiredFromGrossHours} h Brutto ist typischerweise mindestens ${cfg.minPauseMinutes} Min Pause einzutragen (aktuell ${b.breakMinutes} min).`,
+        message: `Tag ${i + 1} (${dateISO}): Bei mehr als ${cfg.pauseRequiredAboveGrossHours} h Brutto ist typischerweise mindestens ${cfg.minPauseMinutes} Min Pause einzutragen (aktuell ${b.breakMinutes} min).`,
         dayIndex: i,
         dateISO,
       });

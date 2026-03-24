@@ -121,3 +121,19 @@ model Holiday {
   @@index([region])
   @@index([includedInPlan])
 }
+
+/// Schulferien / unterrichtsfreie Zeiträume (Salzburg AT, Bayern DE) — im Dienstplan wie Feiertage markierbar
+model SchoolBreak {
+  id              String   @id @default(cuid())
+  startDate       DateTime @db.Date
+  endDate         DateTime @db.Date
+  name            String
+  region          String
+  includedInPlan  Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([startDate, endDate, region, name])
+  @@index([region])
+  @@index([includedInPlan])
+}

@@ -44,10 +44,17 @@ type RowDTO = {
   prevSundayActual: string | null;
 };
 
+type FerienInDay = {
+  name: string;
+  region: string;
+  position: "start" | "end" | "between" | "single";
+};
+
 type DayMeta = {
   dayIndex: number;
   dateISO: string;
   holidays: { name: string; region: string }[];
+  ferien: FerienInDay[];
 };
 
 type WeekPayload = {
@@ -69,6 +76,63 @@ type GridRow = {
 };
 
 const SHORT_DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+/** Kopfzeile: Feiertag amber; Ferien Start/Ende zusätzlich Ring; nur Ferien „dazwischen“ sehr leicht. */
+function dayHeaderHighlightClasses(d: DayMeta): string {
+  const hasHol = d.holidays.length > 0;
+  const ferien = d.ferien ?? [];
+  const strongFerien = ferien.some(
+    (f) =>
+      f.position === "start" ||
+      f.position === "end" ||
+      f.position === "single"
+  );
+  const hasFerien = ferien.length > 0;
+  const lightOnlyFerien = hasFerien && !strongFerien;
+
+  const parts: string[] = [];
+  if (hasHol) parts.push("bg-amber-500/35");
+  if (strongFerien) {
+    parts.push("ring-2 ring-inset ring-cyan-200/90");
+    if (!hasHol) parts.push("bg-cyan-400/20");
+  }
+  if (lightOnlyFerien) parts.push("bg-white/[0.08]");
+  return parts.join(" ");
+}
+
+/** Nur bei transienten Server-/Netzwerkfehlern wiederholen — keine Doppel-Speicherung bei 4xx. */
+const SAVE_RETRY_DELAYS_MS = [0, 900, 2200] as const;
+const SAVE_MAX_ATTEMPTS = 3;
+
+async function putWeekWithSafeRetry(payload: object): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < SAVE_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) =>
+        setTimeout(r, SAVE_RETRY_DELAYS_MS[attempt] ?? 1500)
+      );
+    }
+    try {
+      const res = await fetch("/api/week", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) return res;
+      const retryable =
+        res.status === 502 ||
+        res.status === 503 ||
+        res.status === 504 ||
+        res.status === 408 ||
+        res.status === 429;
+      if (!retryable || attempt === SAVE_MAX_ATTEMPTS - 1) return res;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === SAVE_MAX_ATTEMPTS - 1) throw e;
+    }
+  }
+  throw lastErr ?? new Error("Speichern fehlgeschlagen");
+}
 
 const fmt = new Intl.NumberFormat("de-AT", {
   minimumFractionDigits: 1,
@@ -378,12 +442,9 @@ export function DienstplanWeekView() {
         });
       }
     }
+    const payload = { start: weekStart, site: workSite, cells };
     try {
-      const res = await fetch("/api/week", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ start: weekStart, site: workSite, cells }),
-      });
+      const res = await putWeekWithSafeRetry(payload);
       const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
         const apiErr = j.error?.trim();
@@ -398,6 +459,10 @@ export function DienstplanWeekView() {
       }
       setMsg("Gespeichert.");
       await load();
+    } catch {
+      setMsg(
+        "Netzwerkfehler beim Speichern — bitte Verbindung prüfen und erneut versuchen."
+      );
     } finally {
       saveInFlightRef.current = false;
       setSaving(false);
@@ -583,7 +648,7 @@ export function DienstplanWeekView() {
             href="/feiertage"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
           >
-            Feiertage
+            Feiertage &amp; Ferien
           </Link>
           <Link
             href="/mitarbeiter"
@@ -673,9 +738,10 @@ export function DienstplanWeekView() {
             {data.feiDaysInWeek > 0 && (
               <span
                 className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900"
-                title="Aktivierte Feiertage unter „Feiertage“"
+                title="Aktivierte Feiertage oder Ferien unter „Feiertage & Ferien“"
               >
-                {data.feiDaysInWeek} Feiertag{data.feiDaysInWeek === 1 ? "" : "e"} in dieser Woche
+                {data.feiDaysInWeek} Kalendertag
+                {data.feiDaysInWeek === 1 ? "" : "e"} mit Feiertag/Ferien
               </span>
             )}
             {data.status === "CLOSED" && (
@@ -723,9 +789,7 @@ export function DienstplanWeekView() {
                   {data.days.map((d, i) => (
                     <th
                       key={d.dateISO}
-                      className={`border border-white/20 px-1 py-2 text-center font-semibold ${
-                        d.holidays.length > 0 ? "bg-amber-500/35" : ""
-                      }`}
+                      className={`border border-white/20 px-1 py-2 text-center font-semibold ${dayHeaderHighlightClasses(d)}`}
                     >
                       <div>
                         {SHORT_DAYS[i]} {d.dateISO.split("-").reverse().join(".")}
@@ -736,6 +800,31 @@ export function DienstplanWeekView() {
                             <span key={`${d.dateISO}-${h.region}-${h.name}-${hi}`} className="block">
                               {h.name}
                               <span className="opacity-80"> ({h.region})</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {(d.ferien ?? []).length > 0 && (
+                        <div className="mt-1 max-w-[8rem] text-[10px] font-normal leading-tight">
+                          {(d.ferien ?? []).map((f, fi) => (
+                            <span
+                              key={`${d.dateISO}-f-${f.region}-${f.name}-${fi}`}
+                              className={`block ${
+                                f.position === "between" ? "text-white/50" : "text-white/95"
+                              }`}
+                            >
+                              {f.name}
+                              <span className="opacity-75"> ({f.region})</span>
+                              {f.position === "start" ? (
+                                <span className="block text-[9px] font-normal opacity-80">
+                                  Beginn
+                                </span>
+                              ) : null}
+                              {f.position === "end" ? (
+                                <span className="block text-[9px] font-normal opacity-80">
+                                  Ende
+                                </span>
+                              ) : null}
                             </span>
                           ))}
                         </div>
@@ -926,8 +1015,8 @@ export function DienstplanWeekView() {
             <code>U</code>, <code>K</code>, <code>ZA</code>, <code>FT</code>. <strong>WS</strong> =
             Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> = Saldo vor der Woche +
             (Ist-Summe − Vertragsstunden). Urlaub
-            wird bei <code>U</code> in der Ist-Zeile angepasst. Feiertage unter{" "}
-            <strong>Feiertage</strong>. Untere Zeile = Notiz pro Tag (z. B. Tätigkeit).{" "}
+            wird bei <code>U</code> in der Ist-Zeile angepasst. Feiertage &amp; Ferien unter{" "}
+            <strong>Feiertage &amp; Ferien</strong>. Untere Zeile = Notiz pro Tag (z. B. Tätigkeit).{" "}
             <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
             <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
             Notizen (Mitarbeiter ohne Daten in der Vorwoche: leere Zeilen).{" "}

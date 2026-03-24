@@ -8,9 +8,11 @@ export const LABOR_LAW_CONFIG = {
   minRestHoursBetweenShifts: 11,
   /** Brutto-Anwesenheit (Start–Ende, ggf. über Mitternacht) über dieser Grenze → Hinweis */
   maxGrossDailyHours: 12,
-  /** Ab dieser Brutto-Dauer muss laut MVP-Regel eine Pause eingetragen sein */
-  pauseRequiredFromGrossHours: 6,
-  /** Mindestpause (Minuten), wenn Brutto ≥ pauseRequiredFromGrossHours */
+  /**
+   * Pause nötig, wenn Brutto **über** diesem Wert liegt (also &gt; 6 h, nicht schon bei genau 6 h).
+   */
+  pauseRequiredAboveGrossHours: 6,
+  /** Mindestpause (Minuten), wenn Brutto &gt; pauseRequiredAboveGrossHours */
   minPauseMinutes: 30,
 } as const;
 

@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { buildPublicHolidaysSeed } from "./holidaysSeed";
+import { seedSchoolBreaks } from "./schoolBreaksSeed";
 
 const prisma = new PrismaClient();
 
@@ -76,8 +77,10 @@ async function main() {
     });
   }
 
+  const ferienN = await seedSchoolBreaks(prisma);
+
   console.log(
-    `Seed OK (${holidayRows.length} Feiertags-Zeilen). Login: planer@local / Passwort aus PLANNER_PASSWORD oder Standard.`
+    `Seed OK (${holidayRows.length} Feiertage, ${ferienN} Ferien-Zeiträume). Login: planer@local / Passwort aus PLANNER_PASSWORD oder Standard.`
   );
 }
 

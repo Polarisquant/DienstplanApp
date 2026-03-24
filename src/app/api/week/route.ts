@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { addDaysISO } from "@/lib/dateNav";
-import { buildHolidayMap, countHolidayDaysInWeek } from "@/lib/holidays";
+import { buildHolidayMap } from "@/lib/holidays";
+import { schoolBreakFindManySafe } from "@/lib/schoolBreakDb";
+import {
+  countHighlightedCalendarDays,
+  ferienByDateForWeek,
+  holidayDateKeysFromMap,
+} from "@/lib/schoolBreaks";
 import {
   formatWeekStart,
   isoWeekNumberUTC,
@@ -104,6 +110,9 @@ export async function GET(req: Request) {
   }
 
   const lastDayStr = addDaysISO(weekStartStr, 6);
+  const weekStartD = new Date(`${weekStartStr}T12:00:00.000Z`);
+  const lastDayD = new Date(`${lastDayStr}T12:00:00.000Z`);
+
   const holidayRows = await prisma.holiday.findMany({
     where: {
       includedInPlan: true,
@@ -114,7 +123,20 @@ export async function GET(req: Request) {
     },
   });
   const holidayMap = buildHolidayMap(holidayRows);
-  const feiDaysInWeek = countHolidayDaysInWeek(weekStartStr, holidayMap);
+
+  const schoolBreakRows = await schoolBreakFindManySafe(prisma, {
+    where: {
+      includedInPlan: true,
+      AND: [{ startDate: { lte: lastDayD } }, { endDate: { gte: weekStartD } }],
+    },
+  });
+  const ferienMap = ferienByDateForWeek(weekStartStr, schoolBreakRows);
+  const holidayKeys = holidayDateKeysFromMap(weekStartStr, holidayMap);
+  const feiDaysInWeek = countHighlightedCalendarDays(
+    weekStartStr,
+    holidayKeys,
+    ferienMap
+  );
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const dateISO = addDaysISO(weekStartStr, i);
@@ -122,6 +144,7 @@ export async function GET(req: Request) {
       dayIndex: i,
       dateISO,
       holidays: holidayMap.get(dateISO) ?? [],
+      ferien: ferienMap.get(dateISO) ?? [],
     };
   });
 
@@ -252,51 +275,54 @@ export async function PUT(req: Request) {
       beforeU.set(e.id, countVacationDaysInWeek(arr));
     }
 
-    await prisma.$transaction(async (tx) => {
-      for (const c of body.cells) {
-        const layer = c.layer === "PLAN" ? ShiftLayer.PLAN : ShiftLayer.ACTUAL;
-        await tx.shiftCell.upsert({
-          where: {
-            workWeekId_employeeId_dayIndex_layer: {
+    await prisma.$transaction(
+      async (tx) => {
+        for (const c of body.cells) {
+          const layer = c.layer === "PLAN" ? ShiftLayer.PLAN : ShiftLayer.ACTUAL;
+          await tx.shiftCell.upsert({
+            where: {
+              workWeekId_employeeId_dayIndex_layer: {
+                workWeekId: week.id,
+                employeeId: c.employeeId,
+                dayIndex: c.dayIndex,
+                layer,
+              },
+            },
+            create: {
               workWeekId: week.id,
               employeeId: c.employeeId,
               dayIndex: c.dayIndex,
               layer,
+              rawValue: c.rawValue,
+              note: c.note ?? "",
             },
-          },
-          create: {
-            workWeekId: week.id,
-            employeeId: c.employeeId,
-            dayIndex: c.dayIndex,
-            layer,
-            rawValue: c.rawValue,
-            note: c.note ?? "",
-          },
-          update: { rawValue: c.rawValue, note: c.note ?? "" },
-        });
-      }
-
-      for (const e of employees) {
-        const cellsDb = await tx.shiftCell.findMany({
-          where: {
-            workWeekId: week.id,
-            employeeId: e.id,
-            layer: ShiftLayer.ACTUAL,
-          },
-        });
-        const arr = Array(7).fill("");
-        for (const c of cellsDb) arr[c.dayIndex] = c.rawValue;
-        const afterU = countVacationDaysInWeek(arr);
-        const before = beforeU.get(e.id) ?? 0;
-        const delta = before - afterU;
-        if (delta !== 0) {
-          await tx.employee.update({
-            where: { id: e.id },
-            data: { vacationDaysOpen: { increment: delta } },
+            update: { rawValue: c.rawValue, note: c.note ?? "" },
           });
         }
-      }
-    });
+
+        for (const e of employees) {
+          const cellsDb = await tx.shiftCell.findMany({
+            where: {
+              workWeekId: week.id,
+              employeeId: e.id,
+              layer: ShiftLayer.ACTUAL,
+            },
+          });
+          const arr = Array(7).fill("");
+          for (const c of cellsDb) arr[c.dayIndex] = c.rawValue;
+          const afterU = countVacationDaysInWeek(arr);
+          const before = beforeU.get(e.id) ?? 0;
+          const delta = before - afterU;
+          if (delta !== 0) {
+            await tx.employee.update({
+              where: { id: e.id },
+              data: { vacationDaysOpen: { increment: delta } },
+            });
+          }
+        }
+      },
+      { maxWait: 10_000, timeout: 60_000 }
+    );
 
     return NextResponse.json({ ok: true });
   } catch (e) {

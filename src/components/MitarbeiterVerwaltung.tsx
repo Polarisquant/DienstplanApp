@@ -155,7 +155,7 @@ export function MitarbeiterVerwaltung() {
             href="/feiertage"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
           >
-            Feiertage
+            Feiertage &amp; Ferien
           </Link>
           <Link
             href="/dienstplan"
