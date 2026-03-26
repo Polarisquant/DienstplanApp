@@ -111,6 +111,17 @@ export PLANNER_PASSWORD="ein-sicheres-passwort"
 
 **Hinweis:** Jeder neue Deploy führt **kein** `db seed` automatisch aus. Seed nur bei Bedarf erneut lokal gegen Neon ausführen.
 
+### Performance (Vercel + Postgres) — weniger „klobig“
+
+Lokal ist alles im selben Rechner; **in der Cloud** kommen dazu: Netzwerklatenz, **Serverless-Cold-Starts** und die **Entfernung** zwischen Vercel-Region und Datenbank.
+
+| Maßnahme | Warum |
+|----------|--------|
+| **Neon: Connection Pooling** | Jede Vercel-Funktion soll kurzlebige Verbindungen über den **Pooler** nutzen. Im Neon-Dashboard gibt es oft zwei URLs: **„direct“** und **„pooled“** (Host enthält z. B. `pooler` oder `-pooler`). Für `DATABASE_URL` in **Vercel (Production)** die **gepoolte** Variante verwenden und ggf. `?sslmode=require` beibehalten. Ohne Pool: viele TLS-Handshakes + langsame Requests. |
+| **Gleiche Region** | Vercel-Projekt z. B. **`fra1`** (Frankfurt) wählen, wenn die Neon-DB in **EU** liegt — sonst jede API-Runde **+80–150 ms** und mehr. |
+| **Cold Start** | Die erste Anfrage nach längerer Ruhe kann **1–3 Sekunden** brauchen (Funktion startet neu). Danach sind warme Requests deutlich schneller — das ist normal bei Serverless. |
+| **App-Code** | `GET /api/week` bündelt Kontostände aller Mitarbeitenden in **wenigen DB-Abfragen** (statt einer Kette pro Person) und lädt Feiertage/Ferien/Vorwoche **parallel**. `PUT /api/week` lädt Ist-Zellen vor/nach dem Speichern **je einmal** für die ganze Woche (statt N Queries pro Mitarbeiter), führt **Upserts parallel** aus und bündelt Urlaubs-Saldo-Updates. |
+
 ### 4. Nach Schema-Änderungen
 
 Lokal gegen Neon:

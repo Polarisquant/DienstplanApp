@@ -8,6 +8,9 @@ type WorkSiteVal = "CRUSH" | "CAPPUCONE" | "SHARED";
 type Employee = {
   id: string;
   name: string;
+  personalNumber?: string;
+  entryDate?: string | null;
+  exitDate?: string | null;
   workSite: WorkSiteVal;
   contractHoursPerWeek: number;
   workDaysPerWeek: number;
@@ -18,6 +21,9 @@ type Employee = {
 
 const emptyForm = {
   name: "",
+  personalNumber: "",
+  entryDate: "",
+  exitDate: "",
   workSite: "SHARED" as WorkSiteVal,
   contractHoursPerWeek: 40,
   workDaysPerWeek: 5,
@@ -64,7 +70,11 @@ export function MitarbeiterVerwaltung() {
     const res = await fetch("/api/employees", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        ...form,
+        entryDate: form.entryDate.trim() || null,
+        exitDate: form.exitDate.trim() || null,
+      }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -81,6 +91,19 @@ export function MitarbeiterVerwaltung() {
     setEditId(emp.id);
     setEditForm({
       name: emp.name,
+      personalNumber: emp.personalNumber ?? "",
+      entryDate:
+        typeof emp.entryDate === "string"
+          ? emp.entryDate.slice(0, 10)
+          : emp.entryDate
+            ? new Date(emp.entryDate).toISOString().slice(0, 10)
+            : "",
+      exitDate:
+        typeof emp.exitDate === "string"
+          ? emp.exitDate.slice(0, 10)
+          : emp.exitDate
+            ? new Date(emp.exitDate).toISOString().slice(0, 10)
+            : "",
       workSite: emp.workSite,
       contractHoursPerWeek: emp.contractHoursPerWeek,
       workDaysPerWeek: emp.workDaysPerWeek,
@@ -96,7 +119,11 @@ export function MitarbeiterVerwaltung() {
     const res = await fetch(`/api/employees/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(editForm),
+      body: JSON.stringify({
+        ...editForm,
+        entryDate: editForm.entryDate.trim() || null,
+        exitDate: editForm.exitDate.trim() || null,
+      }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -163,6 +190,12 @@ export function MitarbeiterVerwaltung() {
           >
             Zum Dienstplan
           </Link>
+          <Link
+            href="/monatsuebersicht"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
+            Monatsübersicht
+          </Link>
           <button
             type="button"
             onClick={() => {
@@ -191,6 +224,32 @@ export function MitarbeiterVerwaltung() {
               required
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </Field>
+          <Field label="Personalnummer">
+            <input
+              value={form.personalNumber}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, personalNumber: e.target.value }))
+              }
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              placeholder="z. B. 98992"
+            />
+          </Field>
+          <Field label="Eintritt">
+            <input
+              type="date"
+              value={form.entryDate}
+              onChange={(e) => setForm((f) => ({ ...f, entryDate: e.target.value }))}
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+            />
+          </Field>
+          <Field label="Austritt">
+            <input
+              type="date"
+              value={form.exitDate}
+              onChange={(e) => setForm((f) => ({ ...f, exitDate: e.target.value }))}
               className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
             />
           </Field>
@@ -277,6 +336,7 @@ export function MitarbeiterVerwaltung() {
             <thead>
               <tr className="bg-slate-100 text-left">
                 <th className="border border-slate-200 px-2 py-2">Name</th>
+                <th className="border border-slate-200 px-2 py-2">Pers.-Nr.</th>
                 <th className="border border-slate-200 px-2 py-2">Standort</th>
                 <th className="border border-slate-200 px-2 py-2">Std/W</th>
                 <th className="border border-slate-200 px-2 py-2">Tage</th>
@@ -291,6 +351,9 @@ export function MitarbeiterVerwaltung() {
                 <Fragment key={emp.id}>
                   <tr className={emp.active ? "" : "bg-slate-50 text-slate-500"}>
                     <td className="border border-slate-200 px-2 py-1 font-medium">{emp.name}</td>
+                    <td className="border border-slate-200 px-2 py-1 tabular-nums">
+                      {emp.personalNumber ?? "—"}
+                    </td>
                     <td className="border border-slate-200 px-2 py-1">{siteLabel(emp.workSite)}</td>
                     <td className="border border-slate-200 px-2 py-1 tabular-nums">
                       {emp.contractHoursPerWeek}
@@ -336,7 +399,7 @@ export function MitarbeiterVerwaltung() {
                   </tr>
                   {editId === emp.id && (
                     <tr>
-                      <td colSpan={8} className="border border-slate-200 bg-amber-50/50 p-4">
+                      <td colSpan={9} className="border border-slate-200 bg-amber-50/50 p-4">
                         <form
                           onSubmit={saveEdit}
                           className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
@@ -347,6 +410,38 @@ export function MitarbeiterVerwaltung() {
                               value={editForm.name}
                               onChange={(e) =>
                                 setEditForm((f) => ({ ...f, name: e.target.value }))
+                              }
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                            />
+                          </Field>
+                          <Field label="Personalnummer">
+                            <input
+                              value={editForm.personalNumber}
+                              onChange={(e) =>
+                                setEditForm((f) => ({
+                                  ...f,
+                                  personalNumber: e.target.value,
+                                }))
+                              }
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                            />
+                          </Field>
+                          <Field label="Eintritt">
+                            <input
+                              type="date"
+                              value={editForm.entryDate}
+                              onChange={(e) =>
+                                setEditForm((f) => ({ ...f, entryDate: e.target.value }))
+                              }
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                            />
+                          </Field>
+                          <Field label="Austritt">
+                            <input
+                              type="date"
+                              value={editForm.exitDate}
+                              onChange={(e) =>
+                                setEditForm((f) => ({ ...f, exitDate: e.target.value }))
                               }
                               className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
                             />

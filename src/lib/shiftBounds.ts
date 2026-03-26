@@ -13,7 +13,7 @@ function parseHM(s: string): { h: number; m: number } | null {
 }
 
 export type ShiftBounds = {
-  /** Brutto-Stunden: Ende − Start (+24h wenn über Mitternacht), vor Abzug Pause */
+  /** Brutto-Stunden: Ende − Start (+24 h bei Mitternacht); Pause getrennt für Hinweise / AT-Arbeitszeit */
   grossHours: number;
   breakMinutes: number;
   /** UTC-ms für Schichtbeginn (Kalendertag dateISO, lokale Uhrzeit als UTC-Zahlen gesetzt — konsistent mit reiner Differenz) */

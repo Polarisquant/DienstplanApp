@@ -26,6 +26,43 @@ function whereClosedBefore(weekStart: Date, site: WorkSite) {
   return { weekStart: { lt: weekStart } };
 }
 
+/**
+ * Gleiche Logik wie {@link getBalanceBeforeWeek}, aber **eine** Abfrage für alle Mitarbeiter
+ * (wichtig für Serverless / hohe Latenz zur DB, z. B. Vercel + Neon).
+ */
+export async function getBalancesBeforeWeekForEmployees(
+  employees: { id: string; startBalanceHours: number }[],
+  weekStart: Date,
+  site: WorkSite
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  for (const e of employees) {
+    map.set(e.id, e.startBalanceHours);
+  }
+  const ids = employees.map((e) => e.id);
+  if (ids.length === 0) return map;
+
+  const lines = await prisma.timeAccountLine.findMany({
+    where: {
+      employeeId: { in: ids },
+      workWeek: {
+        status: WeekStatus.CLOSED,
+        ...whereClosedBefore(weekStart, site),
+      },
+    },
+    orderBy: [{ workWeek: { weekStart: "desc" } }, { workWeek: { site: "desc" } }],
+    select: { employeeId: true, balanceAfter: true },
+  });
+
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (seen.has(line.employeeId)) continue;
+    seen.add(line.employeeId);
+    map.set(line.employeeId, line.balanceAfter);
+  }
+  return map;
+}
+
 /** Kontostand vor dieser Kalenderwoche am gewählten Standort (nach abgeschlossenen Vorperioden). */
 export async function getBalanceBeforeWeek(
   employeeId: string,

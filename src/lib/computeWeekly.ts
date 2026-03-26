@@ -2,7 +2,7 @@ import { sumParsedWeekHours } from "./parseShiftCell";
 
 /**
  * Wochenberechnung aus den 7 Tageszellen.
- * - **weeklyHours:** Summe der (Netto-)Arbeitsstunden in der Woche — „ab 0“, ohne Abzug der Vertragswoche.
+ * - **weeklyHours:** Summe der Netto-Stunden aus den Zellen (Zeitspanne minus Pause) — ohne Abzug der Vertragswoche.
  * - **deltaVsContract:** Differenz zur Vertragssoll-Woche (Summe − Vertragsstunden); fließt ins Zeitkonto / ZAG.
  */
 export function computeWeeklyBalance(

@@ -1,12 +1,12 @@
 /**
  * Parst eine Tageszelle wie im Excel-Tool (README / _stunden_formel_pro_tag).
- * U, K → Soll-Anteil (Vertragsstunden / Arbeitstage)
+ * U, K → voller Soll-Tag (**Vertragsstunden / Arbeitstage**), optional **U(2)** / **K(4)** =
+ * genau die angegebenen Stunden (Komma erlaubt).
  * ZA, FT (erkennung über erstes Zeichen Z bzw. F) → 0 Arbeitsstunden
  * Zeit: "11:30-20:00" oder "11:30-20:00-30" (Pause Minuten)
  *
- * **Netto-Arbeitszeit:** Bei Zeit-Eingaben ist die berechnete Stundenzahl
- * **Anwesenheit von Start bis Ende minus Pause** — die Pause zählt **nicht** zur Arbeitszeit.
- * Ohne dritten Wert (keine Pause angegeben) wird **0** Minuten Pause abgezogen.
+ * **Netto-Arbeitszeit bei Zeit-Eingaben:** Zeitraum **Start − Ende** (ggf. +24 h bei Mitternacht) **minus**
+ * die Pause in Minuten (dritter Wert). Ohne dritten Wert: **0** Minuten Pause.
  */
 
 export type ParseResult =
@@ -45,10 +45,27 @@ export function parseShiftCell(
 
   const first = s.charAt(0).toUpperCase();
 
-  // Urlaub / Krank: wie Excel erstes Zeichen U / K
+  // Urlaub / Krank: "U" / "K" = ganzer Soll-Tag; "U(2)" / "K(4)" = Stunden aus Klammern
   if (first === "U" || first === "K") {
-    const hours = contractHours / workDays;
-    return { ok: true, hours, kind: "uk" };
+    const m = /^([UK])\s*\(\s*([\d.,]+)\s*\)\s*$/i.exec(s);
+    if (m) {
+      const h = Number(m[2]!.replace(",", "."));
+      if (!Number.isFinite(h) || h < 0 || h > 24) {
+        return {
+          ok: false,
+          error: "Stunden in Klammern ungültig (0–24, z. B. U(2) oder K(4,5)).",
+        };
+      }
+      return { ok: true, hours: h, kind: "uk" };
+    }
+    if (/^[UK]\s*$/i.test(s)) {
+      const hours = contractHours / workDays;
+      return { ok: true, hours, kind: "uk" };
+    }
+    return {
+      ok: false,
+      error: 'Erwarte "U", "K", "U(3)" oder "K(2)" (Stunden in Klammern).',
+    };
   }
 
   // Excel: erstes Zeichen Z oder F → 0 Arbeitsstunden (ZA, FT, ggf. nur "Z"/"F")
@@ -86,9 +103,56 @@ export function parseShiftCell(
 
   let span = end - start;
   if (span < 0) span += 24; // Schicht über Mitternacht
-  // Netto: reine Arbeitszeit (Pausenzeiten in Stunden abziehen)
   const hours = Math.max(0, span - breakMin / 60);
   return { ok: true, hours, kind: "time" };
+}
+
+/**
+ * Mehrere Schichtblöcke in einer Zelle, getrennt durch **|** (z. B. `11:00-14:00-30 | 15:00-20:00-0`).
+ * Urlaub/Krank/ZA/FT nur als **ein** Block ohne `|` (sonst Segment für Segment parsen).
+ */
+export function parseShiftCellTotalHours(
+  raw: string,
+  contractHours: number,
+  workDays: number
+): number {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (!s) return 0;
+  if (!s.includes("|")) {
+    const r = parseShiftCell(s, contractHours, workDays);
+    return r.ok ? r.hours : 0;
+  }
+  const segs = s
+    .split("|")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let total = 0;
+  for (const seg of segs) {
+    const r = parseShiftCell(seg, contractHours, workDays);
+    if (r.ok) total += r.hours;
+  }
+  return total;
+}
+
+/** Summe Pausen-Minuten aus allen Zeit-Segmenten (dritter `-`-Teil pro Segment). */
+export function pauseMinutesFromRaw(raw: string): number {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (!s) return 0;
+  const segs = s.includes("|")
+    ? s.split("|").map((p) => p.trim()).filter(Boolean)
+    : [s];
+  let total = 0;
+  for (const seg of segs) {
+    const t = seg.trim();
+    const first = t.charAt(0).toUpperCase();
+    if (first === "U" || first === "K" || first === "Z" || first === "F") continue;
+    const parts = t.split("-").map((p) => p.trim());
+    if (parts.length >= 3) {
+      const b = Number(parts[2]!.replace(",", "."));
+      if (Number.isFinite(b) && b >= 0 && b <= 24 * 60) total += b;
+    }
+  }
+  return total;
 }
 
 export function sumParsedWeekHours(

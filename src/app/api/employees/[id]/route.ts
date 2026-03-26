@@ -5,6 +5,9 @@ import { z } from "zod";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(200).optional(),
+  personalNumber: z.string().max(50).optional(),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  exitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   workSite: z.enum(["CRUSH", "CAPPUCONE", "SHARED"]).optional(),
   contractHoursPerWeek: z.number().min(0).max(80).optional(),
   workDaysPerWeek: z.number().int().min(1).max(7).optional(),
@@ -30,6 +33,19 @@ export async function PATCH(req: Request, context: Params) {
       where: { id },
       data: {
         ...(body.name !== undefined && { name: body.name.trim() }),
+        ...(body.personalNumber !== undefined && {
+          personalNumber: body.personalNumber.trim(),
+        }),
+        ...(body.entryDate !== undefined && {
+          entryDate: body.entryDate
+            ? new Date(`${body.entryDate}T12:00:00.000Z`)
+            : null,
+        }),
+        ...(body.exitDate !== undefined && {
+          exitDate: body.exitDate
+            ? new Date(`${body.exitDate}T12:00:00.000Z`)
+            : null,
+        }),
         ...(body.workSite !== undefined && { workSite: toEmployeeSite(body.workSite) }),
         ...(body.contractHoursPerWeek !== undefined && {
           contractHoursPerWeek: body.contractHoursPerWeek,

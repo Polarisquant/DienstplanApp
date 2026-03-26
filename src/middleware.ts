@@ -40,7 +40,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (pathname.startsWith("/dienstplan") || pathname.startsWith("/abrechnung")) {
+  if (
+    pathname.startsWith("/dienstplan") ||
+    pathname.startsWith("/abrechnung") ||
+    pathname.startsWith("/monatsuebersicht")
+  ) {
     const token = request.cookies.get(SESSION_COOKIE)?.value;
     if (!token) {
       return NextResponse.redirect(new URL("/login", request.url));
@@ -62,6 +66,7 @@ export const config = {
     "/mitarbeiter/:path*",
     "/feiertage/:path*",
     "/abrechnung/:path*",
+    "/monatsuebersicht/:path*",
     "/api/:path*",
   ],
 };

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { EmployeeSite, ShiftLayer, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseShiftCell } from "@/lib/parseShiftCell";
+import { vacationDayUnitsFromCell } from "@/lib/vacation";
 import {
   enumerateDatesInclusive,
   weekStartISOContainingDate,
@@ -147,14 +148,18 @@ export async function GET(req: Request) {
         );
         if (wids.length === 0) continue;
 
-        let dayU = false;
+        let dayVacationUnits = 0;
         let dayHours = 0;
         for (const wid of wids) {
           const raw =
             rawLookup.get(`${wid}|${e.id}|${di}`) ?? "";
-          const u = raw.trim().toUpperCase();
-          if (u.startsWith("U")) {
-            dayU = true;
+          const vu = vacationDayUnitsFromCell(
+            raw,
+            e.contractHoursPerWeek,
+            e.workDaysPerWeek
+          );
+          if (vu > 0) {
+            dayVacationUnits = vu;
             break;
           }
           const r = parseShiftCell(raw, e.contractHoursPerWeek, e.workDaysPerWeek);
@@ -164,7 +169,7 @@ export async function GET(req: Request) {
           }
           dayHours += r.hours;
         }
-        if (dayU) vacationDays += 1;
+        if (dayVacationUnits > 0) vacationDays += dayVacationUnits;
         else istHours += dayHours;
       }
 
@@ -190,7 +195,7 @@ export async function GET(req: Request) {
     from: fromISO,
     to: toISO,
     disclaimer:
-      "Keine offizielle Lohnabrechnung. Ist-Stunden aus Ist-Zellen (Standort gemäß Mitarbeiter-Zuordnung Crush/CappuCone/Geteilt); bei Geteilt werden beide Standorte pro Tag summiert; Urlaubstage = Tage mit „U“ in der Ist-Zeile; Stundenkonto gemäß letzter abgeschlossener Woche.",
+      "Keine offizielle Lohnabrechnung. Ist-Stunden aus Ist-Zellen (Standort gemäß Mitarbeiter-Zuordnung Crush/CappuCone/Geteilt); bei Geteilt werden beide Standorte pro Tag summiert; Urlaub = Tagesäquivalente aus „U“ bzw. „U(Stunden)“ in der Ist-Zeile; Stundenkonto gemäß letzter abgeschlossener Woche.",
     rows,
   });
 }

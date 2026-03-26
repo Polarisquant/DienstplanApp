@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+/** In Serverless (Vercel) dieselbe Instanz über Warm-Requests wiederverwenden — weniger Verbindungen & schneller. */
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient | undefined };
 
 export const prisma =
   globalForPrisma.prisma ??
@@ -11,4 +12,4 @@ export const prisma =
         : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+if (!globalForPrisma.prisma) globalForPrisma.prisma = prisma;

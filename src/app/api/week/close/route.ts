@@ -3,7 +3,7 @@ import { ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
 import { computeWeeklyBalance } from "@/lib/computeWeekly";
-import { getBalanceBeforeWeek } from "@/lib/balance";
+import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
 import { employeeWhereForWorkSite } from "@/lib/workSite";
 import { z } from "zod";
 
@@ -38,11 +38,16 @@ export async function POST(req: Request) {
       });
     }
 
-    await prisma.$transaction(async (tx) => {
-      const employees = await tx.employee.findMany({
-        where: { active: true, ...employeeWhereForWorkSite(site) },
-      });
+    const employees = await prisma.employee.findMany({
+      where: { active: true, ...employeeWhereForWorkSite(site) },
+    });
+    const balanceByEmp = await getBalancesBeforeWeekForEmployees(
+      employees.map((e) => ({ id: e.id, startBalanceHours: e.startBalanceHours })),
+      weekStart,
+      site
+    );
 
+    await prisma.$transaction(async (tx) => {
       for (const e of employees) {
         const cellsDb = await tx.shiftCell.findMany({
           where: {
@@ -59,7 +64,7 @@ export async function POST(req: Request) {
           e.workDaysPerWeek
         );
 
-        const base = await getBalanceBeforeWeek(e.id, weekStart, site);
+        const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
         const balanceAfter = base + deltaVsContract;
 
         await tx.timeAccountLine.upsert({

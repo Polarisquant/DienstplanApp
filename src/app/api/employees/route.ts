@@ -5,6 +5,9 @@ import { z } from "zod";
 
 const createSchema = z.object({
   name: z.string().min(1).max(200),
+  personalNumber: z.string().max(50).optional().default(""),
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  exitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   workSite: z.enum(["CRUSH", "CAPPUCONE", "SHARED"]).optional().default("SHARED"),
   contractHoursPerWeek: z.number().min(0).max(80),
   workDaysPerWeek: z.number().int().min(1).max(7),
@@ -34,6 +37,9 @@ export async function POST(req: Request) {
     const emp = await prisma.employee.create({
       data: {
         name: body.name.trim(),
+        personalNumber: body.personalNumber?.trim() ?? "",
+        entryDate: body.entryDate ? new Date(`${body.entryDate}T12:00:00.000Z`) : null,
+        exitDate: body.exitDate ? new Date(`${body.exitDate}T12:00:00.000Z`) : null,
         workSite,
         contractHoursPerWeek: body.contractHoursPerWeek,
         workDaysPerWeek: body.workDaysPerWeek,

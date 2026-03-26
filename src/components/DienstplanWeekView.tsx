@@ -5,11 +5,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addDaysISO, defaultWeekStartISO } from "@/lib/dateNav";
 import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
 import { computeWeeklyBalance } from "@/lib/computeWeekly";
+import { WeekWeatherSkeleton, WeekWeatherStrip } from "@/components/WeekWeatherStrip";
 
 type Layer = "PLAN" | "ACTUAL";
 type UiWorkSite = "CRUSH" | "CAPPUCONE";
 
 const SITE_STORAGE_KEY = "dienstplan-active-site";
+const WEATHER_STORAGE_KEY = "dienstplan-show-weather";
+
+type WeatherApiResponse = {
+  weekStart: string;
+  weekEnd: string;
+  locationName: string;
+  days: {
+    dateISO: string;
+    tempMin: number;
+    tempMax: number;
+    precipProbMax: number | null;
+    windGustsMax: number | null;
+    labelDe: string;
+    symbol: string;
+  }[];
+  attribution: string;
+};
 
 type LaborHint = {
   code: string;
@@ -100,6 +118,27 @@ function dayHeaderHighlightClasses(d: DayMeta): string {
   return parts.join(" ");
 }
 
+function escapeCsvField(s: string): string {
+  if (/[;"\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function istCellsForRow(r: RowDTO, grid: Record<string, GridRow>): {
+  actual: string[];
+  actualNotes: string[];
+} {
+  const g = grid[r.employee.id];
+  if (!g) {
+    return { actual: r.actual, actualNotes: r.actualNotes ?? Array(7).fill("") };
+  }
+  return {
+    actual: g.actual.length ? g.actual : r.actual,
+    actualNotes: g.actualNotes.length ? g.actualNotes : r.actualNotes ?? Array(7).fill(""),
+  };
+}
+
 /** Nur bei transienten Server-/Netzwerkfehlern wiederholen — keine Doppel-Speicherung bei 4xx. */
 const SAVE_RETRY_DELAYS_MS = [0, 900, 2200] as const;
 const SAVE_MAX_ATTEMPTS = 3;
@@ -164,6 +203,10 @@ export function DienstplanWeekView() {
   const [msg, setMsg] = useState<string | null>(null);
   const [laborOpenEmp, setLaborOpenEmp] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
+  const [showWeather, setShowWeather] = useState(false);
+  const [weatherData, setWeatherData] = useState<WeatherApiResponse | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherErr, setWeatherErr] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -176,11 +219,63 @@ export function DienstplanWeekView() {
 
   useEffect(() => {
     try {
+      const w = localStorage.getItem(WEATHER_STORAGE_KEY);
+      if (w === "1") setShowWeather(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(SITE_STORAGE_KEY, workSite);
     } catch {
       /* ignore */
     }
   }, [workSite]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WEATHER_STORAGE_KEY, showWeather ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [showWeather]);
+
+  useEffect(() => {
+    if (!showWeather) {
+      setWeatherData(null);
+      setWeatherErr(null);
+      setWeatherLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setWeatherLoading(true);
+    setWeatherErr(null);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/weather?weekStart=${encodeURIComponent(weekStart)}`,
+          { signal: ac.signal }
+        );
+        const json = (await res.json()) as WeatherApiResponse & { error?: string };
+        if (!res.ok) {
+          setWeatherData(null);
+          setWeatherErr(json.error ?? "Wetter konnte nicht geladen werden.");
+          return;
+        }
+        setWeatherData(json);
+        setWeatherErr(null);
+      } catch (e: unknown) {
+        if (e instanceof Error && e.name === "AbortError") return;
+        setWeatherData(null);
+        setWeatherErr("Wetter konnte nicht geladen werden.");
+      } finally {
+        if (!ac.signal.aborted) setWeatherLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [showWeather, weekStart]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -530,6 +625,104 @@ export function DienstplanWeekView() {
 
   const readOnly = data?.status === "CLOSED";
 
+  function handlePrintIst() {
+    window.print();
+  }
+
+  function downloadIstCsv() {
+    if (!data) return;
+    const sep = ";";
+    const header: string[] = ["Mitarbeiter"];
+    for (let i = 0; i < 7; i++) {
+      header.push(`${SHORT_DAYS[i]}_Ist`);
+    }
+    for (let i = 0; i < 7; i++) {
+      header.push(`${SHORT_DAYS[i]}_Notiz`);
+    }
+    header.push("WS_Ist", "ZAG", "o_U_Tage");
+    const lines = [header.join(sep)];
+    for (const r of data.rows) {
+      const { actual, actualNotes } = istCellsForRow(r, grid);
+      const liveActual = computeWeeklyBalance(
+        actual,
+        r.employee.contractHoursPerWeek,
+        r.employee.workDaysPerWeek
+      );
+      const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+      const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
+      const label = `${r.employee.name}${siteHint}`;
+      const row: string[] = [
+        escapeCsvField(label),
+        ...actual.map((c) => escapeCsvField((c ?? "").trim())),
+        ...actualNotes.map((n) => escapeCsvField((n ?? "").trim())),
+        fmt.format(liveActual.weeklyHours).replace(".", ","),
+        fmt.format(zag).replace(".", ","),
+        fmt.format(r.employee.vacationDaysOpen).replace(".", ","),
+      ];
+      lines.push(row.join(sep));
+    }
+    const csv = "\ufeff" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const site = (data.site ?? workSite).toLowerCase();
+    a.download = `ist_dienstplan_kw${data.isoWeek}_${data.weekStart}_${site}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function openIstEmailDraft() {
+    if (!data) return;
+    const site = workSiteLabel(data.site ?? workSite);
+    const subject = `Ist-Dienstplan KW ${data.isoWeek} · ${data.weekStart} · ${site}`;
+    const bodyLines: string[] = [
+      `Ist-Stundenplan (Stand Anzeige, ggf. vorher Speichern)`,
+      `KW ${data.isoWeek} · Wochenbeginn ${data.weekStart} · ${site}`,
+      "",
+      "—",
+      "",
+    ];
+    for (const r of data.rows) {
+      const { actual, actualNotes } = istCellsForRow(r, grid);
+      const liveActual = computeWeeklyBalance(
+        actual,
+        r.employee.contractHoursPerWeek,
+        r.employee.workDaysPerWeek
+      );
+      const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+      const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
+      const name = `${r.employee.name}${siteHint}`;
+      const dayParts = data.days.map((d, i) => {
+        const cell = (actual[i] ?? "").trim();
+        const note = (actualNotes[i] ?? "").trim();
+        const dn = d.dateISO.split("-").reverse().join(".");
+        if (note) return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"} (Notiz: ${note})`;
+        return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
+      });
+      bodyLines.push(
+        `${name} — WS Ist ${fmt.format(liveActual.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmt.format(r.employee.vacationDaysOpen)} T`
+      );
+      bodyLines.push(dayParts.join(" | "));
+      bodyLines.push("");
+    }
+    bodyLines.push(
+      "(Bei vielen Mitarbeitern ggf. CSV exportieren und anhängen. Druck: Schaltfläche „Drucken“ im Dienstplan.)"
+    );
+    const body = bodyLines.join("\n");
+    const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (href.length > 1800) {
+      if (
+        !confirm(
+          "Der E-Mail-Text ist sehr lang und wird vom Mail-Programm ggf. gekürzt. Trotzdem öffnen? Tipp: CSV exportieren und anhängen."
+        )
+      ) {
+        return;
+      }
+    }
+    window.location.href = href;
+  }
+
   const weekDatesISO = useMemo(
     () =>
       data?.days.length === 7 ? data.days.map((d) => d.dateISO) : [],
@@ -577,15 +770,27 @@ export function DienstplanWeekView() {
     return { warnings, byEmp };
   }, [data, layer, liveLaborByEmp]);
 
+  const weatherDaysAligned = useMemo(() => {
+    if (!data?.days || !weatherData?.days?.length) return null;
+    const byIso = new Map(weatherData.days.map((d) => [d.dateISO, d]));
+    const out: WeatherApiResponse["days"] = [];
+    for (const wd of data.days) {
+      const row = byIso.get(wd.dateISO);
+      if (!row) return null;
+      out.push(row);
+    }
+    return out.length === 7 ? out : null;
+  }, [data?.days, weatherData]);
+
   const shellBg =
     workSite === "CRUSH"
       ? "min-h-screen bg-gradient-to-b from-orange-50/95 via-amber-50/50 to-orange-50/20 transition-[background] duration-500"
       : "min-h-screen bg-gradient-to-b from-emerald-50/90 via-teal-50/45 to-cyan-50/15 transition-[background] duration-500";
 
   return (
-    <div className={shellBg}>
-      <div className="p-4 md:p-6">
-      <header className="mb-6 flex flex-col gap-4 border-b border-slate-200/80 pb-4 md:flex-row md:items-center md:justify-between">
+    <div className={`${shellBg} print:bg-white`}>
+      <div className="p-4 md:p-6 print:p-4">
+      <header className="no-print mb-6 flex flex-col gap-4 border-b border-slate-200/80 pb-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-800">Dienstplan</h1>
           <p className="text-sm text-slate-500">
@@ -662,6 +867,12 @@ export function DienstplanWeekView() {
           >
             Abrechnung
           </Link>
+          <Link
+            href="/monatsuebersicht"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
+            Monatsübersicht
+          </Link>
           <button
             type="button"
             onClick={() => void logout()}
@@ -672,7 +883,7 @@ export function DienstplanWeekView() {
         </div>
       </header>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="no-print mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm font-medium text-slate-600">Ansicht:</span>
         <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
           <button
@@ -698,6 +909,15 @@ export function DienstplanWeekView() {
             Ist
           </button>
         </div>
+        <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-sky-200/80 bg-white/90 px-2.5 py-1.5 text-sm text-slate-600 shadow-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+            checked={showWeather}
+            onChange={(e) => setShowWeather(e.target.checked)}
+          />
+          Wetter
+        </label>
         {data && data.status !== "CLOSED" && (
           <>
             <button
@@ -763,23 +983,87 @@ export function DienstplanWeekView() {
       </div>
 
       {data && (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-950">
+        <div className="no-print mb-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-950">
           <strong className="font-semibold">Arbeitsrecht (Hinweise):</strong>{" "}
           {data.laborLawDisclaimer}
         </div>
       )}
 
       {msg && (
-        <p className="mb-3 text-sm text-slate-700" role="status">
+        <p className="no-print mb-3 text-sm text-slate-700" role="status">
           {msg}
         </p>
       )}
 
       {loading || !data ? (
-        <p className="text-slate-500">Lade…</p>
+        <p className="no-print text-slate-500">Lade…</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-xl border border-[var(--rota-border)] bg-white shadow-sm">
+          <div className="no-print mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-sm">
+            <span className="text-sm font-medium text-slate-700">Ist-Plan</span>
+            <button
+              type="button"
+              onClick={() => handlePrintIst()}
+              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            >
+              Drucken
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadIstCsv()}
+              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              title="Semikolon-CSV für Excel oder Anhang"
+            >
+              CSV exportieren
+            </button>
+            <button
+              type="button"
+              onClick={() => openIstEmailDraft()}
+              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              title="Standard-Mailprogramm mit Entwurf"
+            >
+              E-Mail (Entwurf)
+            </button>
+            <span className="text-xs text-slate-500">
+              Exportiert die <strong>Ist</strong>-Zeilen (auch wenn Plan-Ansicht aktiv). Druck blendet
+              Steuerung aus.
+            </span>
+          </div>
+
+          {showWeather && (
+            <div className="no-print mb-3">
+              {weatherLoading && <WeekWeatherSkeleton />}
+              {!weatherLoading && weatherErr && (
+                <div className="rounded-xl border border-red-200 bg-red-50/90 px-3 py-2 text-sm text-red-900">
+                  {weatherErr}
+                </div>
+              )}
+              {!weatherLoading &&
+                !weatherErr &&
+                weatherData &&
+                weatherDaysAligned &&
+                data && (
+                  <WeekWeatherStrip
+                    days={weatherDaysAligned}
+                    locationName={weatherData.locationName}
+                    attribution={weatherData.attribution}
+                    weekDayLabels={SHORT_DAYS}
+                  />
+                )}
+              {!weatherLoading &&
+                !weatherErr &&
+                weatherData &&
+                !weatherDaysAligned &&
+                data && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
+                    Wetterdaten passen nicht exakt zu den Kalendertagen dieser Woche (Zeitzone /
+                    Zeitraum). Bitte Seite neu laden oder andere Woche wählen.
+                  </div>
+                )}
+            </div>
+          )}
+
+          <div className="no-print overflow-x-auto rounded-xl border border-[var(--rota-border)] bg-white shadow-sm">
             <table className="min-w-[980px] w-full border-collapse text-sm">
               <thead>
                 <tr className="bg-[var(--rota-header)] text-white">
@@ -833,7 +1117,7 @@ export function DienstplanWeekView() {
                   ))}
                   <th
                     className="border border-white/20 px-2 py-2"
-                    title="Summe Netto-Stunden dieser Woche (Plan bzw. Ist je nach Ansicht)"
+                    title="Summe Netto-Stunden (Anwesenheit minus Pause je Tag)"
                   >
                     WS
                   </th>
@@ -943,8 +1227,87 @@ export function DienstplanWeekView() {
             </table>
           </div>
 
+          <article className="hidden print:block print:max-w-none">
+            <h2 className="mb-1 text-base font-semibold text-slate-900">
+              Ist-Dienstplan · KW {data.isoWeek} ·{" "}
+              {data.weekStart.split("-").reverse().join(".")} ·{" "}
+              {workSiteLabel(data.site ?? workSite)}
+            </h2>
+            <p className="mb-3 text-[10px] leading-snug text-slate-600">
+              Keine Rechtsberatung. Export/Druck entspricht der aktuellen Anzeige — bitte vorher{" "}
+              <strong>Speichern</strong>, wenn alle Änderungen in der Datenbank stehen sollen.
+            </p>
+            <table className="w-full border-collapse border border-slate-500 text-[10px] print:text-xs">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border border-slate-400 px-1 py-1 text-left font-semibold">
+                    Mitarbeiter
+                  </th>
+                  {data.days.map((d, i) => (
+                    <th
+                      key={d.dateISO}
+                      className="border border-slate-400 px-1 py-1 text-center font-semibold"
+                    >
+                      {SHORT_DAYS[i]} {d.dateISO.split("-").reverse().join(".")}
+                    </th>
+                  ))}
+                  <th className="border border-slate-400 px-1 py-1 font-semibold">WS Ist</th>
+                  <th className="border border-slate-400 px-1 py-1 font-semibold">ZAG</th>
+                  <th className="border border-slate-400 px-1 py-1 font-semibold">o. U.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r) => {
+                  const { actual, actualNotes } = istCellsForRow(r, grid);
+                  const liveActual = computeWeeklyBalance(
+                    actual,
+                    r.employee.contractHoursPerWeek,
+                    r.employee.workDaysPerWeek
+                  );
+                  const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
+                  const siteHint =
+                    r.employee.workSite === "SHARED" ? " · geteilt" : "";
+                  const printLabel = `${r.employee.name}${siteHint}`;
+                  return (
+                    <tr key={`print-${r.employee.id}`}>
+                      <td className="border border-slate-400 px-1 py-1 align-top font-medium">
+                        {printLabel}
+                      </td>
+                      {actual.map((cell, di) => (
+                        <td
+                          key={di}
+                          className="border border-slate-400 px-1 py-1 align-top text-slate-900"
+                        >
+                          <div>{(cell ?? "").trim() || "—"}</div>
+                          {(actualNotes[di] ?? "").trim() ? (
+                            <div className="text-[9px] text-slate-600">
+                              {(actualNotes[di] ?? "").trim()}
+                            </div>
+                          ) : null}
+                        </td>
+                      ))}
+                      <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                        {fmt.format(liveActual.weeklyHours)}
+                      </td>
+                      <td
+                        className={`border border-slate-400 px-1 py-1 text-right tabular-nums ${
+                          zagP < 0 ? "text-red-700" : ""
+                        }`}
+                      >
+                        {fmt.format(zagP)}
+                      </td>
+                      <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                        {fmt.format(r.employee.vacationDaysOpen)} T
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </article>
+
           {data.rows.some((r) => laborOpenEmp === r.employee.id) && (
-            <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
+            <div className="no-print mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
               {data.rows
                 .filter((r) => laborOpenEmp === r.employee.id)
                 .map((r) => {
@@ -978,9 +1341,9 @@ export function DienstplanWeekView() {
             </div>
           )}
 
-          {errsBlockLive(data, grid, layer)}
+          <div className="no-print">{errsBlockLive(data, grid, layer)}</div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="no-print mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               disabled={readOnly || saving || importingPrevWeek}
@@ -1009,10 +1372,11 @@ export function DienstplanWeekView() {
             )}
           </div>
 
-          <p className="mt-4 text-xs text-slate-500">
+          <p className="no-print mt-4 text-xs text-slate-500">
             Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
-            <strong>Arbeitszeit = Zeitspanne minus Pause</strong> (Pause zählt nicht). Oder{" "}
-            <code>U</code>, <code>K</code>, <code>ZA</code>, <code>FT</code>. <strong>WS</strong> =
+            <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
+            <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
+            Stunden); <code>ZA</code>, <code>FT</code>. <strong>WS</strong> =
             Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> = Saldo vor der Woche +
             (Ist-Summe − Vertragsstunden). Urlaub
             wird bei <code>U</code> in der Ist-Zeile angepasst. Feiertage &amp; Ferien unter{" "}

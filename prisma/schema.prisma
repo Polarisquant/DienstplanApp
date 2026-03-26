@@ -27,6 +27,12 @@ enum EmployeeSite {
 model Employee {
   id                     String       @id @default(cuid())
   name                   String
+  /// Personalnummer (Stammblatt / Monatsübersicht)
+  personalNumber         String       @default("")
+  /// Eintritt (optional)
+  entryDate              DateTime?    @db.Date
+  /// Austritt (optional)
+  exitDate               DateTime?    @db.Date
   /// Crush, CappuCone oder beide Standorte (im Dienstplan beider Filialen sichtbar)
   workSite               EmployeeSite @default(SHARED)
   contractHoursPerWeek   Float
