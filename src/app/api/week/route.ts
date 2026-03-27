@@ -21,6 +21,7 @@ import { LABOR_LAW_DISCLAIMER_DE } from "@/lib/laborLawConfig";
 import {
   employeeWhereForWorkSite,
   parseWorkSiteParam,
+  planOrderByForWorkSite,
   workSiteToParam,
 } from "@/lib/workSite";
 import { z } from "zod";
@@ -83,7 +84,7 @@ export async function GET(req: Request) {
   ] = await Promise.all([
     prisma.employee.findMany({
       where: { active: true, ...employeeWhereForWorkSite(site) },
-      orderBy: { name: "asc" },
+      orderBy: [...planOrderByForWorkSite(site)],
     }),
     prisma.shiftCell.findMany({
       where: { workWeekId: week.id },
@@ -259,6 +260,7 @@ export async function PUT(req: Request) {
 
     const employees = await prisma.employee.findMany({
       where: { active: true, ...employeeWhereForWorkSite(site) },
+      orderBy: [...planOrderByForWorkSite(site)],
     });
     const allowed = new Set(employees.map((e) => e.id));
     for (const c of body.cells) {

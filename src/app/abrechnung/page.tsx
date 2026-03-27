@@ -35,6 +35,11 @@ const fmt = new Intl.NumberFormat("de-AT", {
   maximumFractionDigits: 1,
 });
 
+const fmtDays2 = new Intl.NumberFormat("de-AT", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
 function escapeCsvField(s: string): string {
   if (/[;"\n\r]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
@@ -112,8 +117,8 @@ export default function AbrechnungPage() {
           escapeCsvField(r.workSiteLabel ?? ""),
           fmt.format(r.contractHoursPerWeek).replace(".", ","),
           fmt.format(r.istHoursInPeriod).replace(".", ","),
-          fmt.format(r.vacationDaysInPeriod).replace(".", ","),
-          fmt.format(r.vacationDaysOpenNow).replace(".", ","),
+          fmtDays2.format(r.vacationDaysInPeriod).replace(".", ","),
+          fmtDays2.format(r.vacationDaysOpenNow).replace(".", ","),
           fmt.format(r.balanceHoursAtEnd).replace(".", ","),
           escapeCsvField(hint),
         ].join(sep)
@@ -139,7 +144,7 @@ export default function AbrechnungPage() {
       "",
       ...data.rows.map(
         (r) =>
-          `${r.name}: Ist ${fmt.format(r.istHoursInPeriod)} h | Urlaub ${fmt.format(r.vacationDaysInPeriod)} T | o.U. ${fmt.format(r.vacationDaysOpenNow)} | Konto ${fmt.format(r.balanceHoursAtEnd)} h`
+          `${r.name}: Ist ${fmt.format(r.istHoursInPeriod)} h | Urlaub ${fmtDays2.format(r.vacationDaysInPeriod)} T | o.U. ${fmtDays2.format(r.vacationDaysOpenNow)} | Konto ${fmt.format(r.balanceHoursAtEnd)} h`
       ),
       "",
       "(Bei vielen Mitarbeitern ggf. stattdessen CSV exportieren und anhängen.)",
@@ -314,10 +319,10 @@ export default function AbrechnungPage() {
                     {fmt.format(r.istHoursInPeriod)}
                   </td>
                   <td className="border border-slate-200 px-2 py-2 tabular-nums">
-                    {fmt.format(r.vacationDaysInPeriod)}
+                    {fmtDays2.format(r.vacationDaysInPeriod)}
                   </td>
                   <td className="border border-slate-200 px-2 py-2 tabular-nums">
-                    {fmt.format(r.vacationDaysOpenNow)}
+                    {fmtDays2.format(r.vacationDaysOpenNow)}
                   </td>
                   <td
                     className={`border border-slate-200 px-2 py-2 text-right tabular-nums ${

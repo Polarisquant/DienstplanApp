@@ -39,6 +39,10 @@ model Employee {
   workDaysPerWeek        Int
   startBalanceHours      Float        @default(0)
   vacationDaysOpen       Float        @default(0)
+  /// Zeilenreihenfolge im Dienstplan (Crush) — niedriger = weiter oben
+  planSortOrderCrush     Int          @default(0)
+  /// Zeilenreihenfolge im Dienstplan (CappuCone)
+  planSortOrderCappucone Int          @default(0)
   holidayRegion          String       @default("AT-Salzburg")
   active                 Boolean      @default(true)
   createdAt              DateTime     @default(now())

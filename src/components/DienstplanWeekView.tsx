@@ -139,6 +139,20 @@ function istCellsForRow(r: RowDTO, grid: Record<string, GridRow>): {
   };
 }
 
+function planCellsForRow(r: RowDTO, grid: Record<string, GridRow>): {
+  plan: string[];
+  planNotes: string[];
+} {
+  const g = grid[r.employee.id];
+  if (!g) {
+    return { plan: r.plan, planNotes: r.planNotes ?? Array(7).fill("") };
+  }
+  return {
+    plan: g.plan.length ? g.plan : r.plan,
+    planNotes: g.planNotes.length ? g.planNotes : r.planNotes ?? Array(7).fill(""),
+  };
+}
+
 /** Nur bei transienten Server-/Netzwerkfehlern wiederholen — keine Doppel-Speicherung bei 4xx. */
 const SAVE_RETRY_DELAYS_MS = [0, 900, 2200] as const;
 const SAVE_MAX_ATTEMPTS = 3;
@@ -178,6 +192,12 @@ const fmt = new Intl.NumberFormat("de-AT", {
   maximumFractionDigits: 1,
 });
 
+/** Offener Urlaub (Tage): bis 2 Nachkommastellen, nicht auf 0,5 runden */
+const fmtVacDays = new Intl.NumberFormat("de-AT", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
 function emptyGridRow(): GridRow {
   return {
     plan: Array(7).fill(""),
@@ -200,6 +220,7 @@ export function DienstplanWeekView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importingPrevWeek, setImportingPrevWeek] = useState(false);
+  const [reorderBusy, setReorderBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [laborOpenEmp, setLaborOpenEmp] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
@@ -623,42 +644,101 @@ export function DienstplanWeekView() {
     window.location.href = "/login";
   }
 
+  /** Reihenfolge der Zeilen pro Standort (Crush / CappuCone getrennt); speichert nur Sortierung, nicht den Raster. */
+  async function moveEmployeeRow(index: number, dir: -1 | 1) {
+    if (!data || data.status === "CLOSED") return;
+    const newIndex = index + dir;
+    if (newIndex < 0 || newIndex >= data.rows.length) return;
+
+    const rows = [...data.rows];
+    const [removed] = rows.splice(index, 1);
+    rows.splice(newIndex, 0, removed);
+    const employeeIds = rows.map((r) => r.employee.id);
+
+    setReorderBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/employees/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ site: workSite, employeeIds }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setMsg(j.error ?? "Reihenfolge konnte nicht gespeichert werden.");
+        return;
+      }
+      setData((prev) => (prev ? { ...prev, rows } : prev));
+    } catch {
+      setMsg("Reihenfolge konnte nicht gespeichert werden.");
+    } finally {
+      setReorderBusy(false);
+    }
+  }
+
   const readOnly = data?.status === "CLOSED";
 
-  function handlePrintIst() {
+  function handlePrint() {
     window.print();
   }
 
-  function downloadIstCsv() {
+  function downloadLayerCsv() {
     if (!data) return;
+    const isPlan = layer === "PLAN";
     const sep = ";";
+    const daySuffix = isPlan ? "Plan" : "Ist";
     const header: string[] = ["Mitarbeiter"];
     for (let i = 0; i < 7; i++) {
-      header.push(`${SHORT_DAYS[i]}_Ist`);
+      header.push(`${SHORT_DAYS[i]}_${daySuffix}`);
     }
     for (let i = 0; i < 7; i++) {
       header.push(`${SHORT_DAYS[i]}_Notiz`);
     }
-    header.push("WS_Ist", "ZAG", "o_U_Tage");
+    header.push(isPlan ? "WS_Plan" : "WS_Ist", "ZAG", "o_U_Tage");
     const lines = [header.join(sep)];
     for (const r of data.rows) {
-      const { actual, actualNotes } = istCellsForRow(r, grid);
-      const liveActual = computeWeeklyBalance(
-        actual,
-        r.employee.contractHoursPerWeek,
-        r.employee.workDaysPerWeek
-      );
-      const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
       const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
       const label = `${r.employee.name}${siteHint}`;
-      const row: string[] = [
-        escapeCsvField(label),
-        ...actual.map((c) => escapeCsvField((c ?? "").trim())),
-        ...actualNotes.map((n) => escapeCsvField((n ?? "").trim())),
-        fmt.format(liveActual.weeklyHours).replace(".", ","),
-        fmt.format(zag).replace(".", ","),
-        fmt.format(r.employee.vacationDaysOpen).replace(".", ","),
-      ];
+      let row: string[];
+      if (isPlan) {
+        const { plan, planNotes } = planCellsForRow(r, grid);
+        const livePlan = computeWeeklyBalance(
+          plan,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const { actual } = istCellsForRow(r, grid);
+        const liveActual = computeWeeklyBalance(
+          actual,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        row = [
+          escapeCsvField(label),
+          ...plan.map((c) => escapeCsvField((c ?? "").trim())),
+          ...planNotes.map((n) => escapeCsvField((n ?? "").trim())),
+          fmt.format(livePlan.weeklyHours).replace(".", ","),
+          fmt.format(zag).replace(".", ","),
+          fmtVacDays.format(r.employee.vacationDaysOpen).replace(".", ","),
+        ];
+      } else {
+        const { actual, actualNotes } = istCellsForRow(r, grid);
+        const liveActual = computeWeeklyBalance(
+          actual,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        row = [
+          escapeCsvField(label),
+          ...actual.map((c) => escapeCsvField((c ?? "").trim())),
+          ...actualNotes.map((n) => escapeCsvField((n ?? "").trim())),
+          fmt.format(liveActual.weeklyHours).replace(".", ","),
+          fmt.format(zag).replace(".", ","),
+          fmtVacDays.format(r.employee.vacationDaysOpen).replace(".", ","),
+        ];
+      }
       lines.push(row.join(sep));
     }
     const csv = "\ufeff" + lines.join("\r\n");
@@ -667,47 +747,78 @@ export function DienstplanWeekView() {
     const a = document.createElement("a");
     a.href = url;
     const site = (data.site ?? workSite).toLowerCase();
-    a.download = `ist_dienstplan_kw${data.isoWeek}_${data.weekStart}_${site}.csv`;
+    const prefix = isPlan ? "plan" : "ist";
+    a.download = `${prefix}_dienstplan_kw${data.isoWeek}_${data.weekStart}_${site}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  function openIstEmailDraft() {
+  function openLayerEmailDraft() {
     if (!data) return;
+    const isPlan = layer === "PLAN";
+    const layerDe = isPlan ? "Plan" : "Ist";
     const site = workSiteLabel(data.site ?? workSite);
-    const subject = `Ist-Dienstplan KW ${data.isoWeek} · ${data.weekStart} · ${site}`;
+    const subject = `${layerDe}-Dienstplan KW ${data.isoWeek} · ${data.weekStart} · ${site}`;
     const bodyLines: string[] = [
-      `Ist-Stundenplan (Stand Anzeige, ggf. vorher Speichern)`,
+      `${layerDe}-Stundenplan (Stand Anzeige, ggf. vorher Speichern)`,
       `KW ${data.isoWeek} · Wochenbeginn ${data.weekStart} · ${site}`,
       "",
       "—",
       "",
     ];
     for (const r of data.rows) {
-      const { actual, actualNotes } = istCellsForRow(r, grid);
-      const liveActual = computeWeeklyBalance(
-        actual,
-        r.employee.contractHoursPerWeek,
-        r.employee.workDaysPerWeek
-      );
-      const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
       const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
       const name = `${r.employee.name}${siteHint}`;
-      const dayParts = data.days.map((d, i) => {
-        const cell = (actual[i] ?? "").trim();
-        const note = (actualNotes[i] ?? "").trim();
-        const dn = d.dateISO.split("-").reverse().join(".");
-        if (note) return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"} (Notiz: ${note})`;
-        return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
-      });
-      bodyLines.push(
-        `${name} — WS Ist ${fmt.format(liveActual.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmt.format(r.employee.vacationDaysOpen)} T`
-      );
-      bodyLines.push(dayParts.join(" | "));
-      bodyLines.push("");
+      if (isPlan) {
+        const { plan, planNotes } = planCellsForRow(r, grid);
+        const livePlan = computeWeeklyBalance(
+          plan,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const { actual } = istCellsForRow(r, grid);
+        const liveActual = computeWeeklyBalance(
+          actual,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const dayParts = data.days.map((d, i) => {
+          const cell = (plan[i] ?? "").trim();
+          const note = (planNotes[i] ?? "").trim();
+          const dn = d.dateISO.split("-").reverse().join(".");
+          if (note) return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"} (Notiz: ${note})`;
+          return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
+        });
+        bodyLines.push(
+          `${name} — WS Plan ${fmt.format(livePlan.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(r.employee.vacationDaysOpen)} T`
+        );
+        bodyLines.push(dayParts.join(" | "));
+        bodyLines.push("");
+      } else {
+        const { actual, actualNotes } = istCellsForRow(r, grid);
+        const liveActual = computeWeeklyBalance(
+          actual,
+          r.employee.contractHoursPerWeek,
+          r.employee.workDaysPerWeek
+        );
+        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const dayParts = data.days.map((d, i) => {
+          const cell = (actual[i] ?? "").trim();
+          const note = (actualNotes[i] ?? "").trim();
+          const dn = d.dateISO.split("-").reverse().join(".");
+          if (note) return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"} (Notiz: ${note})`;
+          return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
+        });
+        bodyLines.push(
+          `${name} — WS Ist ${fmt.format(liveActual.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(r.employee.vacationDaysOpen)} T`
+        );
+        bodyLines.push(dayParts.join(" | "));
+        bodyLines.push("");
+      }
     }
     bodyLines.push(
-      "(Bei vielen Mitarbeitern ggf. CSV exportieren und anhängen. Druck: Schaltfläche „Drucken“ im Dienstplan.)"
+      "(Bei vielen Mitarbeitern ggf. CSV exportieren und anhängen. Druck: Export-Leiste „PDF/Druck“ im Dienstplan — entspricht Plan- oder Ist-Ansicht.)"
     );
     const body = bodyLines.join("\n");
     const href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -1000,33 +1111,34 @@ export function DienstplanWeekView() {
       ) : (
         <>
           <div className="no-print mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-sm">
-            <span className="text-sm font-medium text-slate-700">Ist-Plan</span>
+            <span className="text-sm font-medium text-slate-700">Export</span>
             <button
               type="button"
-              onClick={() => handlePrintIst()}
+              onClick={() => handlePrint()}
               className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              title="Druckdialog (dort „Als PDF speichern“) — Inhalt wie Plan/Ist-Umschalter"
             >
-              Drucken
+              PDF / Druck
             </button>
             <button
               type="button"
-              onClick={() => downloadIstCsv()}
+              onClick={() => downloadLayerCsv()}
               className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
-              title="Semikolon-CSV für Excel oder Anhang"
+              title="Semikolon-CSV — Spalten wie aktuelle Plan- oder Ist-Ansicht"
             >
               CSV exportieren
             </button>
             <button
               type="button"
-              onClick={() => openIstEmailDraft()}
+              onClick={() => openLayerEmailDraft()}
               className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
               title="Standard-Mailprogramm mit Entwurf"
             >
               E-Mail (Entwurf)
             </button>
             <span className="text-xs text-slate-500">
-              Exportiert die <strong>Ist</strong>-Zeilen (auch wenn Plan-Ansicht aktiv). Druck blendet
-              Steuerung aus.
+              Gilt für die aktuelle Ansicht <strong>Plan</strong> oder <strong>Ist</strong> (Umschalter).
+              Steuerung wird beim Druck ausgeblendet.
             </span>
           </div>
 
@@ -1132,7 +1244,7 @@ export function DienstplanWeekView() {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r) => {
+                {data.rows.map((r, rowIndex) => {
                   const g = grid[r.employee.id] ?? emptyGridRow();
                   const planCells = g.plan.length ? g.plan : r.plan;
                   const actualCells = g.actual.length ? g.actual : r.actual;
@@ -1163,11 +1275,40 @@ export function DienstplanWeekView() {
                       : (liveH?.actual ?? []);
                   const warnN = hints.filter((h) => h.severity === "warning").length;
                   const laborExpanded = laborOpenEmp === r.employee.id;
+                  const reorderDisabled =
+                    readOnly || reorderBusy || saving || loading;
+                  const rowCount = data.rows.length;
 
                   return (
                     <tr key={r.employee.id} className="border-b border-slate-200 align-top">
-                      <td className="border border-slate-200 bg-[var(--rota-rail)] px-2 py-1 font-medium text-slate-800">
-                        {label}
+                      <td className="border border-slate-200 bg-[var(--rota-rail)] px-1 py-1 font-medium text-slate-800">
+                        <div className="flex items-start gap-1.5">
+                          {!readOnly ? (
+                            <div className="no-print flex shrink-0 flex-col gap-0 border-r border-slate-200/80 pr-1">
+                              <button
+                                type="button"
+                                className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
+                                disabled={reorderDisabled || rowIndex === 0}
+                                aria-label="Zeile nach oben"
+                                title="Nach oben"
+                                onClick={() => void moveEmployeeRow(rowIndex, -1)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
+                                disabled={reorderDisabled || rowIndex >= rowCount - 1}
+                                aria-label="Zeile nach unten"
+                                title="Nach unten"
+                                onClick={() => void moveEmployeeRow(rowIndex, 1)}
+                              >
+                                ↓
+                              </button>
+                            </div>
+                          ) : null}
+                          <span className="min-w-0 pt-0.5">{label}</span>
+                        </div>
                       </td>
                       {displayCells.map((val, di) => (
                         <td key={di} className="border border-slate-200 p-0">
@@ -1177,14 +1318,14 @@ export function DienstplanWeekView() {
                               value={val}
                               onChange={(e) => setCell(r.employee.id, di, e.target.value)}
                               className="h-9 w-full min-w-[6.5rem] rounded border border-slate-200 bg-white px-1.5 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] disabled:bg-slate-100"
-                              placeholder="11:30-18:00-30"
+                              aria-label={`Schicht ${SHORT_DAYS[di]}`}
                             />
                             <input
                               disabled={readOnly}
                               value={displayNotes[di] ?? ""}
                               onChange={(e) => setNote(r.employee.id, di, e.target.value)}
-                              className="h-7 w-full min-w-[6.5rem] rounded border border-dashed border-slate-300 bg-slate-50/80 px-1.5 text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:ring-1 focus:ring-[var(--rota-header)] disabled:bg-slate-100"
-                              placeholder="Notiz…"
+                              className="h-7 w-full min-w-[6.5rem] rounded border border-dashed border-slate-300 bg-slate-50/80 px-1.5 text-[11px] text-slate-700 outline-none focus:ring-1 focus:ring-[var(--rota-header)] disabled:bg-slate-100"
+                              aria-label={`Notiz ${SHORT_DAYS[di]}`}
                               maxLength={2000}
                             />
                           </div>
@@ -1202,7 +1343,7 @@ export function DienstplanWeekView() {
                         {fmt.format(zagLive)}
                       </td>
                       <td className="border border-slate-200 px-2 text-right tabular-nums">
-                        {fmt.format(r.employee.vacationDaysOpen)} T
+                        {fmtVacDays.format(r.employee.vacationDaysOpen)} T
                       </td>
                       <td className="border border-slate-200 px-1 text-center">
                         {warnN > 0 ? (
@@ -1229,13 +1370,20 @@ export function DienstplanWeekView() {
 
           <article className="hidden print:block print:max-w-none">
             <h2 className="mb-1 text-base font-semibold text-slate-900">
-              Ist-Dienstplan · KW {data.isoWeek} ·{" "}
-              {data.weekStart.split("-").reverse().join(".")} ·{" "}
+              {layer === "PLAN" ? "Plan-Dienstplan" : "Ist-Dienstplan"} · KW {data.isoWeek}{" "}
+              · {data.weekStart.split("-").reverse().join(".")} ·{" "}
               {workSiteLabel(data.site ?? workSite)}
             </h2>
             <p className="mb-3 text-[10px] leading-snug text-slate-600">
-              Keine Rechtsberatung. Export/Druck entspricht der aktuellen Anzeige — bitte vorher{" "}
-              <strong>Speichern</strong>, wenn alle Änderungen in der Datenbank stehen sollen.
+              Keine Rechtsberatung. Druck/Export folgt der Ansicht{" "}
+              <strong>{layer === "PLAN" ? "Plan" : "Ist"}</strong> — bitte vorher{" "}
+              <strong>Speichern</strong>, wenn alles in der Datenbank stehen soll.
+              {layer === "PLAN" ? (
+                <>
+                  {" "}
+                  <strong>ZAG</strong> bezieht sich wie in der Tabelle auf die Ist-Woche (Zeitkonto).
+                </>
+              ) : null}
             </p>
             <table className="w-full border-collapse border border-slate-500 text-[10px] print:text-xs">
               <thead>
@@ -1245,19 +1393,72 @@ export function DienstplanWeekView() {
                   </th>
                   {data.days.map((d, i) => (
                     <th
-                      key={d.dateISO}
+                      key={`print-h-${d.dateISO}`}
                       className="border border-slate-400 px-1 py-1 text-center font-semibold"
                     >
                       {SHORT_DAYS[i]} {d.dateISO.split("-").reverse().join(".")}
                     </th>
                   ))}
-                  <th className="border border-slate-400 px-1 py-1 font-semibold">WS Ist</th>
+                  <th className="border border-slate-400 px-1 py-1 font-semibold">
+                    {layer === "PLAN" ? "WS Plan" : "WS Ist"}
+                  </th>
                   <th className="border border-slate-400 px-1 py-1 font-semibold">ZAG</th>
                   <th className="border border-slate-400 px-1 py-1 font-semibold">o. U.</th>
                 </tr>
               </thead>
               <tbody>
                 {data.rows.map((r) => {
+                  const siteHint =
+                    r.employee.workSite === "SHARED" ? " · geteilt" : "";
+                  const printLabel = `${r.employee.name}${siteHint}`;
+                  if (layer === "PLAN") {
+                    const { plan, planNotes } = planCellsForRow(r, grid);
+                    const livePlan = computeWeeklyBalance(
+                      plan,
+                      r.employee.contractHoursPerWeek,
+                      r.employee.workDaysPerWeek
+                    );
+                    const { actual } = istCellsForRow(r, grid);
+                    const liveActual = computeWeeklyBalance(
+                      actual,
+                      r.employee.contractHoursPerWeek,
+                      r.employee.workDaysPerWeek
+                    );
+                    const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
+                    return (
+                      <tr key={`print-${r.employee.id}`}>
+                        <td className="border border-slate-400 px-1 py-1 align-top font-medium">
+                          {printLabel}
+                        </td>
+                        {plan.map((cell, di) => (
+                          <td
+                            key={di}
+                            className="border border-slate-400 px-1 py-1 align-top text-slate-900"
+                          >
+                            <div>{(cell ?? "").trim() || "—"}</div>
+                            {(planNotes[di] ?? "").trim() ? (
+                              <div className="text-[9px] text-slate-600">
+                                {(planNotes[di] ?? "").trim()}
+                              </div>
+                            ) : null}
+                          </td>
+                        ))}
+                        <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                          {fmt.format(livePlan.weeklyHours)}
+                        </td>
+                        <td
+                          className={`border border-slate-400 px-1 py-1 text-right tabular-nums ${
+                            zagP < 0 ? "text-red-700" : ""
+                          }`}
+                        >
+                          {fmt.format(zagP)}
+                        </td>
+                        <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                          {fmtVacDays.format(r.employee.vacationDaysOpen)} T
+                        </td>
+                      </tr>
+                    );
+                  }
                   const { actual, actualNotes } = istCellsForRow(r, grid);
                   const liveActual = computeWeeklyBalance(
                     actual,
@@ -1265,9 +1466,6 @@ export function DienstplanWeekView() {
                     r.employee.workDaysPerWeek
                   );
                   const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
-                  const siteHint =
-                    r.employee.workSite === "SHARED" ? " · geteilt" : "";
-                  const printLabel = `${r.employee.name}${siteHint}`;
                   return (
                     <tr key={`print-${r.employee.id}`}>
                       <td className="border border-slate-400 px-1 py-1 align-top font-medium">
@@ -1297,7 +1495,7 @@ export function DienstplanWeekView() {
                         {fmt.format(zagP)}
                       </td>
                       <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
-                        {fmt.format(r.employee.vacationDaysOpen)} T
+                        {fmtVacDays.format(r.employee.vacationDaysOpen)} T
                       </td>
                     </tr>
                   );

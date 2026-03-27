@@ -11,8 +11,9 @@ const createSchema = z.object({
   workSite: z.enum(["CRUSH", "CAPPUCONE", "SHARED"]).optional().default("SHARED"),
   contractHoursPerWeek: z.number().min(0).max(80),
   workDaysPerWeek: z.number().int().min(1).max(7),
-  startBalanceHours: z.number().min(-1000).max(1000).optional().default(0),
-  vacationDaysOpen: z.number().min(0).max(365).optional().default(0),
+  startBalanceHours: z.number().min(-10000).max(10000).optional().default(0),
+  /** Auch negative Werte (z. B. Defizit); bis 2 Nachkommastellen sinnvoll im UI */
+  vacationDaysOpen: z.number().min(-1000).max(1000).optional().default(0),
 });
 
 export async function GET(req: Request) {

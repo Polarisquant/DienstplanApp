@@ -11,8 +11,8 @@ const patchSchema = z.object({
   workSite: z.enum(["CRUSH", "CAPPUCONE", "SHARED"]).optional(),
   contractHoursPerWeek: z.number().min(0).max(80).optional(),
   workDaysPerWeek: z.number().int().min(1).max(7).optional(),
-  startBalanceHours: z.number().min(-1000).max(1000).optional(),
-  vacationDaysOpen: z.number().min(0).max(365).optional(),
+  startBalanceHours: z.number().min(-10000).max(10000).optional(),
+  vacationDaysOpen: z.number().min(-1000).max(1000).optional(),
   active: z.boolean().optional(),
 });
 

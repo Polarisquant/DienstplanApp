@@ -20,6 +20,13 @@ export function employeeWhereForWorkSite(site: WorkSite) {
   };
 }
 
+/** Sortierung der Mitarbeiterzeilen im Dienstplan für den gewählten Filial-Standort */
+export function planOrderByForWorkSite(site: WorkSite) {
+  return site === WorkSite.CRUSH
+    ? ([{ planSortOrderCrush: "asc" as const }, { name: "asc" as const }] as const)
+    : ([{ planSortOrderCappucone: "asc" as const }, { name: "asc" as const }] as const);
+}
+
 export function employeeSiteLabel(s: EmployeeSite): string {
   switch (s) {
     case EmployeeSite.CRUSH:

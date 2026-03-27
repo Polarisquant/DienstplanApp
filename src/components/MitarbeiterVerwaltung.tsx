@@ -19,16 +19,43 @@ type Employee = {
   active: boolean;
 };
 
-const emptyForm = {
+/** Formular: ZAG / Urlaub als String, damit „-“ beim Tippen nicht zu NaN/0 wird */
+type EmployeeFormState = {
+  name: string;
+  personalNumber: string;
+  entryDate: string;
+  exitDate: string;
+  workSite: WorkSiteVal;
+  contractHoursPerWeek: number;
+  workDaysPerWeek: number;
+  startBalanceHours: string;
+  vacationDaysOpen: string;
+};
+
+function numToInputString(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return String(n);
+}
+
+/** Leer → 0; Komma oder Punkt; unvollständiges „-“ → null */
+function parseSignedDecimal(raw: string): number | null {
+  const t = raw.trim().replace(",", ".");
+  if (t === "") return 0;
+  if (t === "-" || t === "+" || t === "." || t === ",") return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+const emptyForm: EmployeeFormState = {
   name: "",
   personalNumber: "",
   entryDate: "",
   exitDate: "",
-  workSite: "SHARED" as WorkSiteVal,
+  workSite: "SHARED",
   contractHoursPerWeek: 40,
   workDaysPerWeek: 5,
-  startBalanceHours: 0,
-  vacationDaysOpen: 0,
+  startBalanceHours: "0",
+  vacationDaysOpen: "0",
 };
 
 const SITE_OPTIONS: { value: WorkSiteVal; label: string }[] = [
@@ -37,14 +64,19 @@ const SITE_OPTIONS: { value: WorkSiteVal; label: string }[] = [
   { value: "SHARED", label: "Geteilt (beide Standorte)" },
 ];
 
+const fmtDec2 = new Intl.NumberFormat("de-AT", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
 export function MitarbeiterVerwaltung() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<EmployeeFormState>(emptyForm);
   const [editId, setEditId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState(emptyForm);
+  const [editForm, setEditForm] = useState<EmployeeFormState>(emptyForm);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,11 +99,21 @@ export function MitarbeiterVerwaltung() {
   async function createEmployee(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
+    const startBalanceHours = parseSignedDecimal(form.startBalanceHours);
+    const vacationDaysOpen = parseSignedDecimal(form.vacationDaysOpen);
+    if (startBalanceHours === null || vacationDaysOpen === null) {
+      setMsg(
+        "Startsaldo ZAG oder offener Urlaub: bitte gültige Zahl eingeben (Minus und Dezimalstellen erlaubt)."
+      );
+      return;
+    }
     const res = await fetch("/api/employees", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...form,
+        startBalanceHours,
+        vacationDaysOpen,
         entryDate: form.entryDate.trim() || null,
         exitDate: form.exitDate.trim() || null,
       }),
@@ -107,8 +149,8 @@ export function MitarbeiterVerwaltung() {
       workSite: emp.workSite,
       contractHoursPerWeek: emp.contractHoursPerWeek,
       workDaysPerWeek: emp.workDaysPerWeek,
-      startBalanceHours: emp.startBalanceHours,
-      vacationDaysOpen: emp.vacationDaysOpen,
+      startBalanceHours: numToInputString(emp.startBalanceHours),
+      vacationDaysOpen: numToInputString(emp.vacationDaysOpen),
     });
   }
 
@@ -116,11 +158,21 @@ export function MitarbeiterVerwaltung() {
     e.preventDefault();
     if (!editId) return;
     setMsg(null);
+    const startBalanceHours = parseSignedDecimal(editForm.startBalanceHours);
+    const vacationDaysOpen = parseSignedDecimal(editForm.vacationDaysOpen);
+    if (startBalanceHours === null || vacationDaysOpen === null) {
+      setMsg(
+        "Startsaldo ZAG oder offener Urlaub: bitte gültige Zahl eingeben (Minus und Dezimalstellen erlaubt)."
+      );
+      return;
+    }
     const res = await fetch(`/api/employees/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...editForm,
+        startBalanceHours,
+        vacationDaysOpen,
         entryDate: editForm.entryDate.trim() || null,
         exitDate: editForm.exitDate.trim() || null,
       }),
@@ -296,25 +348,28 @@ export function MitarbeiterVerwaltung() {
           </Field>
           <Field label="Startsaldo ZAG (Std.)">
             <input
-              type="number"
-              step="0.1"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
               value={form.startBalanceHours}
               onChange={(e) =>
-                setForm((f) => ({ ...f, startBalanceHours: Number(e.target.value) }))
+                setForm((f) => ({ ...f, startBalanceHours: e.target.value }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              placeholder="z. B. -12,5"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
             />
           </Field>
           <Field label="Offener Urlaub (Tage)">
             <input
-              type="number"
-              step="0.5"
-              min={0}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
               value={form.vacationDaysOpen}
               onChange={(e) =>
-                setForm((f) => ({ ...f, vacationDaysOpen: Number(e.target.value) }))
+                setForm((f) => ({ ...f, vacationDaysOpen: e.target.value }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              placeholder="z. B. -0,25"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
             />
           </Field>
           <div className="md:col-span-2">
@@ -360,10 +415,10 @@ export function MitarbeiterVerwaltung() {
                     </td>
                     <td className="border border-slate-200 px-2 py-1">{emp.workDaysPerWeek}</td>
                     <td className="border border-slate-200 px-2 py-1 tabular-nums">
-                      {emp.startBalanceHours}
+                      {fmtDec2.format(emp.startBalanceHours)}
                     </td>
                     <td className="border border-slate-200 px-2 py-1 tabular-nums">
-                      {emp.vacationDaysOpen}
+                      {fmtDec2.format(emp.vacationDaysOpen)}
                     </td>
                     <td className="border border-slate-200 px-2 py-1">
                       {emp.active ? "Ja" : "Nein"}
@@ -496,31 +551,34 @@ export function MitarbeiterVerwaltung() {
                           </Field>
                           <Field label="Startsaldo ZAG (Std.)">
                             <input
-                              type="number"
-                              step="0.1"
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
                               value={editForm.startBalanceHours}
                               onChange={(e) =>
                                 setEditForm((f) => ({
                                   ...f,
-                                  startBalanceHours: Number(e.target.value),
+                                  startBalanceHours: e.target.value,
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              placeholder="z. B. -12,5"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
                             />
                           </Field>
                           <Field label="Offener Urlaub (Tage)">
                             <input
-                              type="number"
-                              step="0.5"
-                              min={0}
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
                               value={editForm.vacationDaysOpen}
                               onChange={(e) =>
                                 setEditForm((f) => ({
                                   ...f,
-                                  vacationDaysOpen: Number(e.target.value),
+                                  vacationDaysOpen: e.target.value,
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              placeholder="z. B. -0,25"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
                             />
                           </Field>
                           <div className="flex items-end gap-2 md:col-span-2 lg:col-span-3">

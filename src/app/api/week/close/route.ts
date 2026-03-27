@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
 import { computeWeeklyBalance } from "@/lib/computeWeekly";
 import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
-import { employeeWhereForWorkSite } from "@/lib/workSite";
+import { employeeWhereForWorkSite, planOrderByForWorkSite } from "@/lib/workSite";
 import { z } from "zod";
 
 const bodySchema = z.object({
@@ -40,6 +40,7 @@ export async function POST(req: Request) {
 
     const employees = await prisma.employee.findMany({
       where: { active: true, ...employeeWhereForWorkSite(site) },
+      orderBy: [...planOrderByForWorkSite(site)],
     });
     const balanceByEmp = await getBalancesBeforeWeekForEmployees(
       employees.map((e) => ({ id: e.id, startBalanceHours: e.startBalanceHours })),
