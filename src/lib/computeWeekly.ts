@@ -1,9 +1,35 @@
-import { sumParsedWeekHours } from "./parseShiftCell";
+import { sumParsedWeekHours, sumParsedWeekHoursWithContracts } from "./parseShiftCell";
+import type { ContractRow } from "./employeeContract";
+import { weeklyProRataTarget } from "./employeeContract";
 
 /**
- * Wochenberechnung aus den 7 Tageszellen.
- * - **weeklyHours:** Summe der Netto-Stunden aus den Zellen (Zeitspanne minus Pause) — ohne Abzug der Vertragswoche.
- * - **deltaVsContract:** Differenz zur Vertragssoll-Woche (Summe − Vertragsstunden); fließt ins Zeitkonto / ZAG.
+ * Wochenberechnung mit Vertrags-Historie (tagesgenauer Vertrag in der KW).
+ */
+export function computeWeeklyBalanceWithContracts(
+  dayCells: string[],
+  weekStartISO: string,
+  contractRows: ContractRow[]
+): {
+  weeklyHours: number;
+  deltaVsContract: number;
+  errors: string[];
+} {
+  const { hours, errors } = sumParsedWeekHoursWithContracts(
+    dayCells,
+    weekStartISO,
+    contractRows
+  );
+  const target = weeklyProRataTarget(contractRows, weekStartISO);
+  return {
+    weeklyHours: hours,
+    deltaVsContract: hours - target,
+    errors,
+  };
+}
+
+/**
+ * Wochenberechnung bei **einem** Vertrag (Tests, schmale Aufrufer).
+ * - **deltaVsContract:** Ist-Summe − Wochenvertragsstunden (wie bisher).
  */
 export function computeWeeklyBalance(
   dayCells: string[],

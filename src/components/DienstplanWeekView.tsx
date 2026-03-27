@@ -2,9 +2,18 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { addDaysISO, defaultWeekStartISO } from "@/lib/dateNav";
+import {
+  addDaysISO,
+  defaultWeekStartISO,
+  weekStartISOContainingDate,
+} from "@/lib/dateNav";
+import { firstContractEffectiveFromISO } from "@/lib/firstContractDate";
 import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
-import { computeWeeklyBalance } from "@/lib/computeWeekly";
+import {
+  computeWeeklyBalanceWithContracts,
+} from "@/lib/computeWeekly";
+import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
+import { contractForDate, type ContractRow } from "@/lib/employeeContract";
 import { WeekWeatherSkeleton, WeekWeatherStrip } from "@/components/WeekWeatherStrip";
 
 type Layer = "PLAN" | "ACTUAL";
@@ -45,6 +54,8 @@ type RowDTO = {
     contractHoursPerWeek: number;
     workDaysPerWeek: number;
     vacationDaysOpen: number;
+    /** Für Fallback-Vertrag ohne Historie-Zeilen */
+    entryDate?: string | null;
   };
   plan: string[];
   actual: string[];
@@ -60,7 +71,33 @@ type RowDTO = {
   zagPreview: number;
   prevSundayPlan: string | null;
   prevSundayActual: string | null;
+  /** Vertrags-Historie (für Wechsel mitten in der KW) */
+  contractRows?: ContractRow[];
 };
+
+function contractRowsForRow(r: RowDTO): ContractRow[] {
+  if (r.contractRows && r.contractRows.length > 0) return r.contractRows;
+  const entry = r.employee.entryDate ?? null;
+  return [
+    {
+      effectiveFrom: firstContractEffectiveFromISO(
+        entry ? new Date(`${entry}T12:00:00.000Z`) : null
+      ),
+      contractHoursPerWeek: r.employee.contractHoursPerWeek,
+      workDaysPerWeek: r.employee.workDaysPerWeek,
+    },
+  ];
+}
+
+/** Anzeige Mo…So: ein Wert oder „10/3T → 30/3T“ wenn die KW zwei Verträge trifft */
+function contractLabelForWeek(rows: ContractRow[], weekStartISO: string): string {
+  const first = contractForDate(rows, weekStartISO);
+  const last = contractForDate(rows, addDaysISO(weekStartISO, 6));
+  const a = `${fmt.format(first.contractHoursPerWeek)}/${first.workDaysPerWeek}`;
+  const b = `${fmt.format(last.contractHoursPerWeek)}/${last.workDaysPerWeek}`;
+  if (a === b) return `${a}T`;
+  return `${a}T → ${b}T`;
+}
 
 type FerienInDay = {
   name: string;
@@ -83,7 +120,6 @@ type WeekPayload = {
   feiDaysInWeek: number;
   days: DayMeta[];
   rows: RowDTO[];
-  laborLawDisclaimer: string;
 };
 
 type GridRow = {
@@ -151,6 +187,30 @@ function planCellsForRow(r: RowDTO, grid: Record<string, GridRow>): {
     plan: g.plan.length ? g.plan : r.plan,
     planNotes: g.planNotes.length ? g.planNotes : r.planNotes ?? Array(7).fill(""),
   };
+}
+
+/** o. U. nach Plan+Ist im Raster vs. zuletzt geladenem Stand (Vorschau vor Speichern). */
+function vacationOpenPreview(
+  r: RowDTO,
+  grid: Record<string, GridRow>,
+  weekStart: string,
+  cr: ContractRow[]
+): number {
+  const { plan: livePlan } = planCellsForRow(r, grid);
+  const { actual: liveActual } = istCellsForRow(r, grid);
+  const saved = countVacationDaysInWeekWithPlanActual(
+    r.plan,
+    r.actual,
+    weekStart,
+    cr
+  );
+  const live = countVacationDaysInWeekWithPlanActual(
+    livePlan,
+    liveActual,
+    weekStart,
+    cr
+  );
+  return r.employee.vacationDaysOpen - (live - saved);
 }
 
 /** Nur bei transienten Server-/Netzwerkfehlern wiederholen — keine Doppel-Speicherung bei 4xx. */
@@ -702,41 +762,39 @@ export function DienstplanWeekView() {
       let row: string[];
       if (isPlan) {
         const { plan, planNotes } = planCellsForRow(r, grid);
-        const livePlan = computeWeeklyBalance(
+        const cr = contractRowsForRow(r);
+        const livePlan = computeWeeklyBalanceWithContracts(
           plan,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
+          data.weekStart,
+          cr
         );
-        const { actual } = istCellsForRow(r, grid);
-        const liveActual = computeWeeklyBalance(
-          actual,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
-        );
-        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
+        const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
           ...plan.map((c) => escapeCsvField((c ?? "").trim())),
           ...planNotes.map((n) => escapeCsvField((n ?? "").trim())),
           fmt.format(livePlan.weeklyHours).replace(".", ","),
           fmt.format(zag).replace(".", ","),
-          fmtVacDays.format(r.employee.vacationDaysOpen).replace(".", ","),
+          fmtVacDays.format(vacPrev).replace(".", ","),
         ];
       } else {
         const { actual, actualNotes } = istCellsForRow(r, grid);
-        const liveActual = computeWeeklyBalance(
+        const cr = contractRowsForRow(r);
+        const liveActual = computeWeeklyBalanceWithContracts(
           actual,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
+          data.weekStart,
+          cr
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
           ...actual.map((c) => escapeCsvField((c ?? "").trim())),
           ...actualNotes.map((n) => escapeCsvField((n ?? "").trim())),
           fmt.format(liveActual.weeklyHours).replace(".", ","),
           fmt.format(zag).replace(".", ","),
-          fmtVacDays.format(r.employee.vacationDaysOpen).replace(".", ","),
+          fmtVacDays.format(vacPrev).replace(".", ","),
         ];
       }
       lines.push(row.join(sep));
@@ -771,18 +829,14 @@ export function DienstplanWeekView() {
       const name = `${r.employee.name}${siteHint}`;
       if (isPlan) {
         const { plan, planNotes } = planCellsForRow(r, grid);
-        const livePlan = computeWeeklyBalance(
+        const cr = contractRowsForRow(r);
+        const livePlan = computeWeeklyBalanceWithContracts(
           plan,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
+          data.weekStart,
+          cr
         );
-        const { actual } = istCellsForRow(r, grid);
-        const liveActual = computeWeeklyBalance(
-          actual,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
-        );
-        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
+        const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (plan[i] ?? "").trim();
           const note = (planNotes[i] ?? "").trim();
@@ -791,18 +845,20 @@ export function DienstplanWeekView() {
           return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
         });
         bodyLines.push(
-          `${name} — WS Plan ${fmt.format(livePlan.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(r.employee.vacationDaysOpen)} T`
+          `${name} — WS Plan ${fmt.format(livePlan.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(vacPrev)} T`
         );
         bodyLines.push(dayParts.join(" | "));
         bodyLines.push("");
       } else {
         const { actual, actualNotes } = istCellsForRow(r, grid);
-        const liveActual = computeWeeklyBalance(
+        const cr = contractRowsForRow(r);
+        const liveActual = computeWeeklyBalanceWithContracts(
           actual,
-          r.employee.contractHoursPerWeek,
-          r.employee.workDaysPerWeek
+          data.weekStart,
+          cr
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (actual[i] ?? "").trim();
           const note = (actualNotes[i] ?? "").trim();
@@ -811,7 +867,7 @@ export function DienstplanWeekView() {
           return `${SHORT_DAYS[i]} ${dn}: ${cell || "—"}`;
         });
         bodyLines.push(
-          `${name} — WS Ist ${fmt.format(liveActual.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(r.employee.vacationDaysOpen)} T`
+          `${name} — WS Ist ${fmt.format(liveActual.weeklyHours)} h, ZAG ${fmt.format(zag)} h, o.U. ${fmtVacDays.format(vacPrev)} T`
         );
         bodyLines.push(dayParts.join(" | "));
         bodyLines.push("");
@@ -960,6 +1016,19 @@ export function DienstplanWeekView() {
           >
             Aktuelle Woche
           </button>
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm hover:bg-slate-50">
+            <span className="text-slate-600">Gehe zu</span>
+            <input
+              type="date"
+              className="w-[10.5rem] rounded border border-slate-200 bg-white px-1.5 py-0.5 text-sm text-slate-800"
+              value={weekStart}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) setWeekStart(weekStartISOContainingDate(v));
+              }}
+              title="Beliebiges Datum in der Zielwoche wählen — es wird der Montag dieser Woche geladen"
+            />
+          </label>
           <Link
             href="/feiertage"
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
@@ -1092,13 +1161,6 @@ export function DienstplanWeekView() {
           </span>
         )}
       </div>
-
-      {data && (
-        <div className="no-print mb-3 rounded-lg border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-950">
-          <strong className="font-semibold">Arbeitsrecht (Hinweise):</strong>{" "}
-          {data.laborLawDisclaimer}
-        </div>
-      )}
 
       {msg && (
         <p className="no-print mb-3 text-sm text-slate-700" role="status">
@@ -1235,11 +1297,20 @@ export function DienstplanWeekView() {
                   </th>
                   <th
                     className="border border-white/20 px-2 py-2"
-                    title="Zeitkonto: Saldo vor dieser Woche + (Ist-Summe − Vertragsstunden/Woche)"
+                    title={
+                      layer === "PLAN"
+                        ? "Plan-Vorschau: Saldo vor dieser Woche + (Plan-Summe − Vertrags-Soll)"
+                        : "Saldo vor dieser Woche + (Ist-Summe − Vertrags-Soll)"
+                    }
                   >
                     ZAG
                   </th>
-                  <th className="border border-white/20 px-2 py-2">o. U.</th>
+                  <th
+                    className="border border-white/20 px-2 py-2"
+                    title="Offener Urlaub: Vorschau nach Plan/Ist dieser Woche (gegenüber zuletzt geladenem Speicherstand)"
+                  >
+                    o. U.
+                  </th>
                   <th className="border border-white/20 px-2 py-2 text-center">AT</th>
                 </tr>
               </thead>
@@ -1252,22 +1323,34 @@ export function DienstplanWeekView() {
                   const actualNotes = g.actualNotes.length ? g.actualNotes : r.actualNotes ?? [];
                   const displayCells = layer === "PLAN" ? planCells : actualCells;
                   const displayNotes = layer === "PLAN" ? planNotes : actualNotes;
-                  const liveLayer = computeWeeklyBalance(
-                    displayCells,
-                    r.employee.contractHoursPerWeek,
-                    r.employee.workDaysPerWeek
+                  const cr = contractRowsForRow(r);
+                  const livePlanCalc = computeWeeklyBalanceWithContracts(
+                    planCells,
+                    data.weekStart,
+                    cr
                   );
-                  const liveActual = computeWeeklyBalance(
+                  const liveActualCalc = computeWeeklyBalanceWithContracts(
                     actualCells,
-                    r.employee.contractHoursPerWeek,
-                    r.employee.workDaysPerWeek
+                    data.weekStart,
+                    cr
                   );
-                  const weeklyHoursShown = liveLayer.weeklyHours;
+                  const weeklyHoursShown =
+                    layer === "PLAN"
+                      ? livePlanCalc.weeklyHours
+                      : liveActualCalc.weeklyHours;
                   const zagLive =
-                    r.balanceBeforeWeek + liveActual.deltaVsContract;
+                    layer === "PLAN"
+                      ? r.balanceBeforeWeek + livePlanCalc.deltaVsContract
+                      : r.balanceBeforeWeek + liveActualCalc.deltaVsContract;
+                  const vacationShown = vacationOpenPreview(
+                    r,
+                    grid,
+                    data.weekStart,
+                    cr
+                  );
                   const siteHint =
                     r.employee.workSite === "SHARED" ? " · geteilt" : "";
-                  const label = `${r.employee.name}${siteHint} (${fmt.format(r.employee.contractHoursPerWeek)}/${r.employee.workDaysPerWeek}T)`;
+                  const label = `${r.employee.name}${siteHint} (${contractLabelForWeek(cr, data.weekStart)})`;
                   const liveH = liveLaborByEmp.get(r.employee.id);
                   const hints =
                     layer === "PLAN"
@@ -1338,12 +1421,16 @@ export function DienstplanWeekView() {
                         className={`border border-slate-200 px-2 text-right tabular-nums ${
                           zagLive < 0 ? "text-red-600" : ""
                         }`}
-                        title="Saldo vor Woche + (Ist-Summe − Vertragssoll); Ist-Summe unabhängig von der Ansicht"
+                        title={
+                          layer === "PLAN"
+                            ? "Vorschau: Saldo vor Woche + (Plan-Summe − Vertragssoll)"
+                            : "Saldo vor Woche + (Ist-Summe − Vertragssoll)"
+                        }
                       >
                         {fmt.format(zagLive)}
                       </td>
                       <td className="border border-slate-200 px-2 text-right tabular-nums">
-                        {fmtVacDays.format(r.employee.vacationDaysOpen)} T
+                        {fmtVacDays.format(vacationShown)} T
                       </td>
                       <td className="border border-slate-200 px-1 text-center">
                         {warnN > 0 ? (
@@ -1381,7 +1468,8 @@ export function DienstplanWeekView() {
               {layer === "PLAN" ? (
                 <>
                   {" "}
-                  <strong>ZAG</strong> bezieht sich wie in der Tabelle auf die Ist-Woche (Zeitkonto).
+                  <strong>ZAG</strong> und <strong>o. U.</strong> sind Plan-Vorschau (Saldo/Urlaub bei
+                  Umsetzung dieses Plans; o. U. inkl. Ist-Zeile wenn befüllt).
                 </>
               ) : null}
             </p>
@@ -1413,18 +1501,14 @@ export function DienstplanWeekView() {
                   const printLabel = `${r.employee.name}${siteHint}`;
                   if (layer === "PLAN") {
                     const { plan, planNotes } = planCellsForRow(r, grid);
-                    const livePlan = computeWeeklyBalance(
+                    const crP = contractRowsForRow(r);
+                    const livePlan = computeWeeklyBalanceWithContracts(
                       plan,
-                      r.employee.contractHoursPerWeek,
-                      r.employee.workDaysPerWeek
+                      data.weekStart,
+                      crP
                     );
-                    const { actual } = istCellsForRow(r, grid);
-                    const liveActual = computeWeeklyBalance(
-                      actual,
-                      r.employee.contractHoursPerWeek,
-                      r.employee.workDaysPerWeek
-                    );
-                    const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
+                    const zagP = r.balanceBeforeWeek + livePlan.deltaVsContract;
+                    const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
                     return (
                       <tr key={`print-${r.employee.id}`}>
                         <td className="border border-slate-400 px-1 py-1 align-top font-medium">
@@ -1454,18 +1538,20 @@ export function DienstplanWeekView() {
                           {fmt.format(zagP)}
                         </td>
                         <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
-                          {fmtVacDays.format(r.employee.vacationDaysOpen)} T
+                          {fmtVacDays.format(vacPrev)} T
                         </td>
                       </tr>
                     );
                   }
                   const { actual, actualNotes } = istCellsForRow(r, grid);
-                  const liveActual = computeWeeklyBalance(
+                  const crI = contractRowsForRow(r);
+                  const liveActual = computeWeeklyBalanceWithContracts(
                     actual,
-                    r.employee.contractHoursPerWeek,
-                    r.employee.workDaysPerWeek
+                    data.weekStart,
+                    crI
                   );
                   const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
+                  const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
                   return (
                     <tr key={`print-${r.employee.id}`}>
                       <td className="border border-slate-400 px-1 py-1 align-top font-medium">
@@ -1495,7 +1581,7 @@ export function DienstplanWeekView() {
                         {fmt.format(zagP)}
                       </td>
                       <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
-                        {fmtVacDays.format(r.employee.vacationDaysOpen)} T
+                        {fmtVacDays.format(vacPrevI)} T
                       </td>
                     </tr>
                   );
@@ -1574,10 +1660,11 @@ export function DienstplanWeekView() {
             Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
             <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
             <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
-            Stunden); <code>ZA</code>, <code>FT</code>. <strong>WS</strong> =
-            Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> = Saldo vor der Woche +
-            (Ist-Summe − Vertragsstunden). Urlaub
-            wird bei <code>U</code> in der Ist-Zeile angepasst. Feiertage &amp; Ferien unter{" "}
+            Stunden); <code>ZA</code>, <code>FT</code>.             <strong>WS</strong> =
+            Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> in der Plan-Ansicht =
+            Vorschau (Saldo vor der Woche + Plan-Summe − Vertragssoll); in der Ist-Ansicht wie
+            Zeitkonto (mit Ist-Summe). <strong>o. U.</strong> = Vorschau inkl. geplantem Urlaub
+            dieser Woche (Ist zählt, wenn die Zelle nicht leer ist). Feiertage &amp; Ferien unter{" "}
             <strong>Feiertage &amp; Ferien</strong>. Untere Zeile = Notiz pro Tag (z. B. Tätigkeit).{" "}
             <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
             <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
@@ -1603,10 +1690,10 @@ function errsBlockLive(
       layer === "PLAN"
         ? (g?.plan ?? r.plan)
         : (g?.actual ?? r.actual);
-    const { errors } = computeWeeklyBalance(
+    const { errors } = computeWeeklyBalanceWithContracts(
       cells,
-      r.employee.contractHoursPerWeek,
-      r.employee.workDaysPerWeek
+      data.weekStart,
+      contractRowsForRow(r)
     );
     return errors.map((x) => `${r.employee.name}: ${x}`);
   });

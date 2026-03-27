@@ -5,6 +5,12 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 type WorkSiteVal = "CRUSH" | "CAPPUCONE" | "SHARED";
 
+type ContractSlice = {
+  effectiveFrom: string;
+  contractHoursPerWeek: number;
+  workDaysPerWeek: number;
+};
+
 type Employee = {
   id: string;
   name: string;
@@ -17,6 +23,7 @@ type Employee = {
   startBalanceHours: number;
   vacationDaysOpen: number;
   active: boolean;
+  contracts?: ContractSlice[];
 };
 
 /** Formular: ZAG / Urlaub als String, damit „-“ beim Tippen nicht zu NaN/0 wird */
@@ -30,6 +37,10 @@ type EmployeeFormState = {
   workDaysPerWeek: number;
   startBalanceHours: string;
   vacationDaysOpen: string;
+  /** Nur Bearbeiten: zusätzlicher Vertrag ab (1. eines Monats) */
+  contractChangeFrom: string;
+  contractChangeHours: number;
+  contractChangeDays: number;
 };
 
 function numToInputString(n: number): string {
@@ -46,6 +57,18 @@ function parseSignedDecimal(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** API liefert ISO ggf. mit Zeit — nur yyyy-mm-dd vergleichen/anzeigen */
+function normIsoDate(s: string): string {
+  return String(s).trim().slice(0, 10);
+}
+
+/** Kalenderdatum deutsch z. B. 2000-01-01 → 01.01.2000 */
+function isoDateToDE(iso: string): string {
+  const d = normIsoDate(iso);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return iso;
+  return d.split("-").reverse().join(".");
+}
+
 const emptyForm: EmployeeFormState = {
   name: "",
   personalNumber: "",
@@ -56,6 +79,9 @@ const emptyForm: EmployeeFormState = {
   workDaysPerWeek: 5,
   startBalanceHours: "0",
   vacationDaysOpen: "0",
+  contractChangeFrom: "",
+  contractChangeHours: 30,
+  contractChangeDays: 5,
 };
 
 const SITE_OPTIONS: { value: WorkSiteVal; label: string }[] = [
@@ -131,6 +157,18 @@ export function MitarbeiterVerwaltung() {
 
   function startEdit(emp: Employee) {
     setEditId(emp.id);
+    const today = new Date().toISOString().slice(0, 10);
+    const contracts = emp.contracts ?? [];
+    let cur: ContractSlice | undefined;
+    if (contracts.length > 0) {
+      const sorted = [...contracts].sort((a, b) =>
+        normIsoDate(a.effectiveFrom).localeCompare(normIsoDate(b.effectiveFrom))
+      );
+      cur = sorted[0];
+      for (const c of sorted) {
+        if (normIsoDate(c.effectiveFrom) <= today) cur = c;
+      }
+    }
     setEditForm({
       name: emp.name,
       personalNumber: emp.personalNumber ?? "",
@@ -147,10 +185,13 @@ export function MitarbeiterVerwaltung() {
             ? new Date(emp.exitDate).toISOString().slice(0, 10)
             : "",
       workSite: emp.workSite,
-      contractHoursPerWeek: emp.contractHoursPerWeek,
-      workDaysPerWeek: emp.workDaysPerWeek,
+      contractHoursPerWeek: cur?.contractHoursPerWeek ?? emp.contractHoursPerWeek,
+      workDaysPerWeek: cur?.workDaysPerWeek ?? emp.workDaysPerWeek,
       startBalanceHours: numToInputString(emp.startBalanceHours),
       vacationDaysOpen: numToInputString(emp.vacationDaysOpen),
+      contractChangeFrom: "",
+      contractChangeHours: 30,
+      contractChangeDays: 5,
     });
   }
 
@@ -166,16 +207,37 @@ export function MitarbeiterVerwaltung() {
       );
       return;
     }
+    if (editForm.contractChangeFrom.trim()) {
+      const d = editForm.contractChangeFrom.trim();
+      if (!/^\d{4}-\d{2}-01$/.test(d)) {
+        setMsg(
+          "Vertragswechsel: Datum muss der 1. eines Monats sein (z. B. 2025-04-01)."
+        );
+        return;
+      }
+    }
+    const payload: Record<string, unknown> = {
+      name: editForm.name,
+      personalNumber: editForm.personalNumber,
+      workSite: editForm.workSite,
+      contractHoursPerWeek: editForm.contractHoursPerWeek,
+      workDaysPerWeek: editForm.workDaysPerWeek,
+      startBalanceHours,
+      vacationDaysOpen,
+      entryDate: editForm.entryDate.trim() || null,
+      exitDate: editForm.exitDate.trim() || null,
+    };
+    if (editForm.contractChangeFrom.trim()) {
+      payload.contractChange = {
+        effectiveFrom: editForm.contractChangeFrom.trim(),
+        contractHoursPerWeek: editForm.contractChangeHours,
+        workDaysPerWeek: editForm.contractChangeDays,
+      };
+    }
     const res = await fetch(`/api/employees/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...editForm,
-        startBalanceHours,
-        vacationDaysOpen,
-        entryDate: editForm.entryDate.trim() || null,
-        exitDate: editForm.exitDate.trim() || null,
-      }),
+      body: JSON.stringify(payload),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -549,6 +611,79 @@ export function MitarbeiterVerwaltung() {
                               className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
                             />
                           </Field>
+                          {emp.contracts && emp.contracts.length > 0 && (
+                            <div className="md:col-span-2 lg:col-span-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                              <p className="font-semibold text-slate-800">Vertragsstände (Historie)</p>
+                              <ul className="mt-1 list-inside list-disc space-y-0.5">
+                                {[...emp.contracts]
+                                  .sort((a, b) =>
+                                    normIsoDate(a.effectiveFrom).localeCompare(
+                                      normIsoDate(b.effectiveFrom)
+                                    )
+                                  )
+                                  .map((c) => (
+                                    <li key={normIsoDate(c.effectiveFrom)}>
+                                      ab {isoDateToDE(c.effectiveFrom)}: {c.contractHoursPerWeek}{" "}
+                                      h / {c.workDaysPerWeek} T
+                                    </li>
+                                  ))}
+                              </ul>
+                            </div>
+                          )}
+                          <div className="md:col-span-2 lg:col-span-3 rounded border border-dashed border-slate-300 bg-slate-50/80 px-3 py-2">
+                            <p className="mb-2 text-xs font-semibold text-slate-800">
+                              Geplanter Vertragswechsel (optional)
+                            </p>
+                            <p className="mb-2 text-[11px] text-slate-600">
+                              Ab dem <strong>1.</strong> eines Monats — zusätzliche Zeile; Dienstplan
+                              und Konto nutzen ab dann automatisch den neuen Vertrag pro Kalendertag.
+                            </p>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <Field label="Gültig ab (1. des Monats)">
+                                <input
+                                  type="date"
+                                  value={editForm.contractChangeFrom}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      contractChangeFrom: e.target.value,
+                                    }))
+                                  }
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </Field>
+                              <Field label="Neu: Std./Woche">
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  min={0}
+                                  value={editForm.contractChangeHours}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      contractChangeHours: Number(e.target.value),
+                                    }))
+                                  }
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </Field>
+                              <Field label="Neu: Tage/Woche">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={7}
+                                  value={editForm.contractChangeDays}
+                                  onChange={(e) =>
+                                    setEditForm((f) => ({
+                                      ...f,
+                                      contractChangeDays: Number(e.target.value),
+                                    }))
+                                  }
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                />
+                              </Field>
+                            </div>
+                          </div>
                           <Field label="Startsaldo ZAG (Std.)">
                             <input
                               type="text"

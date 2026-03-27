@@ -50,6 +50,21 @@ model Employee {
 
   shiftCells        ShiftCell[]
   timeAccountLines  TimeAccountLine[]
+  contracts         EmployeeContract[]
+}
+
+/// Vertragsstände (Wechsel z. B. zum 1. eines Monats). Mehrere Zeilen pro Mitarbeiter, sortiert nach effectiveFrom.
+model EmployeeContract {
+  id                   String   @id @default(cuid())
+  employeeId           String
+  employee             Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Gültig ab diesem Kalendertag (inkl.). In der Praxis oft Monatserster.
+  effectiveFrom        DateTime @db.Date
+  contractHoursPerWeek   Float
+  workDaysPerWeek        Int
+
+  @@unique([employeeId, effectiveFrom])
+  @@index([employeeId])
 }
 
 enum WeekStatus {

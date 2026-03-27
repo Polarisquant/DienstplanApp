@@ -8,6 +8,7 @@ import {
 import bcrypt from "bcryptjs";
 import { buildPublicHolidaysSeed } from "./holidaysSeed";
 import { seedSchoolBreaks } from "./schoolBreaksSeed";
+import { firstContractEffectiveFromNoonUTC } from "../src/lib/firstContractDate";
 
 const prisma = new PrismaClient();
 
@@ -74,6 +75,26 @@ async function main() {
       where: { weekStart_site: { weekStart: ws, site } },
       create: { weekStart: ws, site, status: WeekStatus.DRAFT },
       update: {},
+    });
+  }
+
+  const ohneVertrag = await prisma.employee.findMany({
+    where: { contracts: { none: {} } },
+    select: {
+      id: true,
+      entryDate: true,
+      contractHoursPerWeek: true,
+      workDaysPerWeek: true,
+    },
+  });
+  for (const e of ohneVertrag) {
+    await prisma.employeeContract.create({
+      data: {
+        employeeId: e.id,
+        effectiveFrom: firstContractEffectiveFromNoonUTC(e.entryDate),
+        contractHoursPerWeek: e.contractHoursPerWeek,
+        workDaysPerWeek: e.workDaysPerWeek,
+      },
     });
   }
 

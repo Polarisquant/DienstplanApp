@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { EmployeeSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  normalizePlaceholderContractsAll,
+  syncEmployeeContractCachesIfStale,
+} from "@/lib/employeeContractLoad";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -19,9 +23,12 @@ const createSchema = z.object({
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const all = searchParams.get("includeInactive") === "1";
+  await normalizePlaceholderContractsAll();
+  await syncEmployeeContractCachesIfStale();
   const list = await prisma.employee.findMany({
     where: all ? undefined : { active: true },
     orderBy: { name: "asc" },
+    include: { contracts: { orderBy: { effectiveFrom: "asc" } } },
   });
   return NextResponse.json({ employees: list });
 }
@@ -35,18 +42,35 @@ export async function POST(req: Request) {
         : body.workSite === "CAPPUCONE"
           ? EmployeeSite.CAPPUCONE
           : EmployeeSite.SHARED;
-    const emp = await prisma.employee.create({
-      data: {
-        name: body.name.trim(),
-        personalNumber: body.personalNumber?.trim() ?? "",
-        entryDate: body.entryDate ? new Date(`${body.entryDate}T12:00:00.000Z`) : null,
-        exitDate: body.exitDate ? new Date(`${body.exitDate}T12:00:00.000Z`) : null,
-        workSite,
-        contractHoursPerWeek: body.contractHoursPerWeek,
-        workDaysPerWeek: body.workDaysPerWeek,
-        startBalanceHours: body.startBalanceHours ?? 0,
-        vacationDaysOpen: body.vacationDaysOpen ?? 0,
-      },
+    const from = body.entryDate
+      ? new Date(`${body.entryDate}T12:00:00.000Z`)
+      : new Date("2000-01-01T12:00:00.000Z");
+    const emp = await prisma.$transaction(async (tx) => {
+      const e = await tx.employee.create({
+        data: {
+          name: body.name.trim(),
+          personalNumber: body.personalNumber?.trim() ?? "",
+          entryDate: body.entryDate ? new Date(`${body.entryDate}T12:00:00.000Z`) : null,
+          exitDate: body.exitDate ? new Date(`${body.exitDate}T12:00:00.000Z`) : null,
+          workSite,
+          contractHoursPerWeek: body.contractHoursPerWeek,
+          workDaysPerWeek: body.workDaysPerWeek,
+          startBalanceHours: body.startBalanceHours ?? 0,
+          vacationDaysOpen: body.vacationDaysOpen ?? 0,
+        },
+      });
+      await tx.employeeContract.create({
+        data: {
+          employeeId: e.id,
+          effectiveFrom: from,
+          contractHoursPerWeek: body.contractHoursPerWeek,
+          workDaysPerWeek: body.workDaysPerWeek,
+        },
+      });
+      return tx.employee.findUniqueOrThrow({
+        where: { id: e.id },
+        include: { contracts: { orderBy: { effectiveFrom: "asc" } } },
+      });
     });
     return NextResponse.json(emp);
   } catch (e) {

@@ -14,10 +14,16 @@ import {
   isoWeekNumberUTC,
   parseWeekStartParam,
 } from "@/lib/weekUtils";
-import { computeWeeklyBalance } from "@/lib/computeWeekly";
+import {
+  computeWeeklyBalanceWithContracts,
+} from "@/lib/computeWeekly";
+import { contractForDate } from "@/lib/employeeContract";
+import {
+  contractRowsMapForEmployees,
+  normalizePlaceholderContractsAll,
+} from "@/lib/employeeContractLoad";
 import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
-import { countVacationDaysInWeek } from "@/lib/vacation";
-import { LABOR_LAW_DISCLAIMER_DE } from "@/lib/laborLawConfig";
+import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
 import {
   employeeWhereForWorkSite,
   parseWorkSiteParam,
@@ -58,6 +64,8 @@ export async function GET(req: Request) {
   }
 
   const site = parseWorkSiteParam(searchParams.get("site"));
+
+  await normalizePlaceholderContractsAll();
 
   let week = await prisma.workWeek.findUnique({
     where: { weekStart_site: { weekStart: start, site } },
@@ -166,20 +174,24 @@ export async function GET(req: Request) {
     site
   );
 
+  const contractMap = await contractRowsMapForEmployees(employees.map((e) => e.id));
+
   const rows = employees.map((e) => {
+    const contractRows = contractMap.get(e.id) ?? [];
+    const cWeek = contractForDate(contractRows, weekStartStr);
     const plan = packShiftField(cells, e.id, ShiftLayer.PLAN, "rawValue");
     const actual = packShiftField(cells, e.id, ShiftLayer.ACTUAL, "rawValue");
     const planNotes = packShiftField(cells, e.id, ShiftLayer.PLAN, "note");
     const actualNotes = packShiftField(cells, e.id, ShiftLayer.ACTUAL, "note");
-    const wsPlan = computeWeeklyBalance(
+    const wsPlan = computeWeeklyBalanceWithContracts(
       plan,
-      e.contractHoursPerWeek,
-      e.workDaysPerWeek
+      weekStartStr,
+      contractRows
     );
-    const wsAct = computeWeeklyBalance(
+    const wsAct = computeWeeklyBalanceWithContracts(
       actual,
-      e.contractHoursPerWeek,
-      e.workDaysPerWeek
+      weekStartStr,
+      contractRows
     );
     const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
     const zagPreview = base + wsAct.deltaVsContract;
@@ -188,10 +200,12 @@ export async function GET(req: Request) {
         id: e.id,
         name: e.name,
         workSite: e.workSite,
-        contractHoursPerWeek: e.contractHoursPerWeek,
-        workDaysPerWeek: e.workDaysPerWeek,
+        contractHoursPerWeek: cWeek.contractHoursPerWeek,
+        workDaysPerWeek: cWeek.workDaysPerWeek,
         vacationDaysOpen: e.vacationDaysOpen,
+        entryDate: e.entryDate ? e.entryDate.toISOString().slice(0, 10) : null,
       },
+      contractRows,
       plan,
       actual,
       planNotes,
@@ -216,7 +230,6 @@ export async function GET(req: Request) {
     feiDaysInWeek,
     days,
     rows,
-    laborLawDisclaimer: LABOR_LAW_DISCLAIMER_DE,
   });
 }
 
@@ -272,24 +285,48 @@ export async function PUT(req: Request) {
       }
     }
 
-    const allActualBefore = await prisma.shiftCell.findMany({
-      where: { workWeekId: week.id, layer: ShiftLayer.ACTUAL },
-      select: { employeeId: true, dayIndex: true, rawValue: true },
-    });
-    const beforeWeekArrays = new Map<string, string[]>();
+    const weekStartStrPut = formatWeekStart(start);
+    const contractMapPut = await contractRowsMapForEmployees(
+      employees.map((e) => e.id)
+    );
+
+    const [allPlanBefore, allActualBefore] = await Promise.all([
+      prisma.shiftCell.findMany({
+        where: { workWeekId: week.id, layer: ShiftLayer.PLAN },
+        select: { employeeId: true, dayIndex: true, rawValue: true },
+      }),
+      prisma.shiftCell.findMany({
+        where: { workWeekId: week.id, layer: ShiftLayer.ACTUAL },
+        select: { employeeId: true, dayIndex: true, rawValue: true },
+      }),
+    ]);
+    const beforePlanArrays = new Map<string, string[]>();
+    const beforeActualArrays = new Map<string, string[]>();
     for (const e of employees) {
-      beforeWeekArrays.set(e.id, Array(7).fill(""));
+      beforePlanArrays.set(e.id, Array(7).fill(""));
+      beforeActualArrays.set(e.id, Array(7).fill(""));
+    }
+    for (const c of allPlanBefore) {
+      const arr = beforePlanArrays.get(c.employeeId);
+      if (arr) arr[c.dayIndex] = c.rawValue;
     }
     for (const c of allActualBefore) {
-      const arr = beforeWeekArrays.get(c.employeeId);
+      const arr = beforeActualArrays.get(c.employeeId);
       if (arr) arr[c.dayIndex] = c.rawValue;
     }
     const beforeU = new Map<string, number>();
     for (const e of employees) {
-      const arr = beforeWeekArrays.get(e.id)!;
+      const planArr = beforePlanArrays.get(e.id)!;
+      const actualArr = beforeActualArrays.get(e.id)!;
+      const rows = contractMapPut.get(e.id) ?? [];
       beforeU.set(
         e.id,
-        countVacationDaysInWeek(arr, e.contractHoursPerWeek, e.workDaysPerWeek)
+        countVacationDaysInWeekWithPlanActual(
+          planArr,
+          actualArr,
+          weekStartStrPut,
+          rows
+        )
       );
     }
 
@@ -320,26 +357,41 @@ export async function PUT(req: Request) {
           })
         );
 
-        const allActualAfter = await tx.shiftCell.findMany({
-          where: { workWeekId: week.id, layer: ShiftLayer.ACTUAL },
-          select: { employeeId: true, dayIndex: true, rawValue: true },
-        });
-        const afterWeekArrays = new Map<string, string[]>();
+        const [allPlanAfter, allActualAfter] = await Promise.all([
+          tx.shiftCell.findMany({
+            where: { workWeekId: week.id, layer: ShiftLayer.PLAN },
+            select: { employeeId: true, dayIndex: true, rawValue: true },
+          }),
+          tx.shiftCell.findMany({
+            where: { workWeekId: week.id, layer: ShiftLayer.ACTUAL },
+            select: { employeeId: true, dayIndex: true, rawValue: true },
+          }),
+        ]);
+        const afterPlanArrays = new Map<string, string[]>();
+        const afterActualArrays = new Map<string, string[]>();
         for (const e of employees) {
-          afterWeekArrays.set(e.id, Array(7).fill(""));
+          afterPlanArrays.set(e.id, Array(7).fill(""));
+          afterActualArrays.set(e.id, Array(7).fill(""));
+        }
+        for (const c of allPlanAfter) {
+          const arr = afterPlanArrays.get(c.employeeId);
+          if (arr) arr[c.dayIndex] = c.rawValue;
         }
         for (const c of allActualAfter) {
-          const arr = afterWeekArrays.get(c.employeeId);
+          const arr = afterActualArrays.get(c.employeeId);
           if (arr) arr[c.dayIndex] = c.rawValue;
         }
 
         const vacationUpdates: Promise<unknown>[] = [];
         for (const e of employees) {
-          const arr = afterWeekArrays.get(e.id)!;
-          const afterU = countVacationDaysInWeek(
-            arr,
-            e.contractHoursPerWeek,
-            e.workDaysPerWeek
+          const planArr = afterPlanArrays.get(e.id)!;
+          const actualArr = afterActualArrays.get(e.id)!;
+          const rows = contractMapPut.get(e.id) ?? [];
+          const afterU = countVacationDaysInWeekWithPlanActual(
+            planArr,
+            actualArr,
+            weekStartStrPut,
+            rows
           );
           const before = beforeU.get(e.id) ?? 0;
           const delta = before - afterU;

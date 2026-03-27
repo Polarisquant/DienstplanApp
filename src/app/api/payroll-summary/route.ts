@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { EmployeeSite, ShiftLayer, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseShiftCell } from "@/lib/parseShiftCell";
-import { vacationDayUnitsFromCell } from "@/lib/vacation";
+import { vacationDayUnitsForDayPlanActual } from "@/lib/vacation";
+import { contractForDate } from "@/lib/employeeContract";
+import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
 import {
   enumerateDatesInclusive,
   weekStartISOContainingDate,
@@ -110,19 +112,23 @@ export async function GET(req: Request) {
       : await prisma.shiftCell.findMany({
           where: {
             workWeekId: { in: allWeekIds },
-            layer: ShiftLayer.ACTUAL,
+            layer: { in: [ShiftLayer.PLAN, ShiftLayer.ACTUAL] },
           },
           select: {
             workWeekId: true,
             employeeId: true,
             dayIndex: true,
+            layer: true,
             rawValue: true,
           },
         });
 
-  const rawLookup = new Map<string, string>();
+  const planLookup = new Map<string, string>();
+  const actualLookup = new Map<string, string>();
   for (const c of cells) {
-    rawLookup.set(`${c.workWeekId}|${c.employeeId}|${c.dayIndex}`, c.rawValue);
+    const key = `${c.workWeekId}|${c.employeeId}|${c.dayIndex}`;
+    if (c.layer === ShiftLayer.PLAN) planLookup.set(key, c.rawValue);
+    if (c.layer === ShiftLayer.ACTUAL) actualLookup.set(key, c.rawValue);
   }
 
   const employees = await prisma.employee.findMany({
@@ -130,11 +136,16 @@ export async function GET(req: Request) {
     orderBy: { name: "asc" },
   });
 
+  const contractMapPayroll = await contractRowsMapForEmployees(
+    employees.map((e) => e.id)
+  );
+
   const rows = await Promise.all(
     employees.map(async (e) => {
       let istHours = 0;
       let vacationDays = 0;
       const parseErrors: string[] = [];
+      const rowsC = contractMapPayroll.get(e.id) ?? [];
 
       for (const day of days) {
         const ws = weekStartISOContainingDate(day);
@@ -148,23 +159,30 @@ export async function GET(req: Request) {
         );
         if (wids.length === 0) continue;
 
+        const cDay = contractForDate(rowsC, day);
         let dayVacationUnits = 0;
         let dayHours = 0;
         for (const wid of wids) {
-          const raw =
-            rawLookup.get(`${wid}|${e.id}|${di}`) ?? "";
-          const vu = vacationDayUnitsFromCell(
-            raw,
-            e.contractHoursPerWeek,
-            e.workDaysPerWeek
+          const key = `${wid}|${e.id}|${di}`;
+          const planRaw = planLookup.get(key) ?? "";
+          const actualRaw = actualLookup.get(key) ?? "";
+          const vu = vacationDayUnitsForDayPlanActual(
+            planRaw,
+            actualRaw,
+            cDay.contractHoursPerWeek,
+            cDay.workDaysPerWeek
           );
           if (vu > 0) {
             dayVacationUnits = vu;
             break;
           }
-          const r = parseShiftCell(raw, e.contractHoursPerWeek, e.workDaysPerWeek);
+          const r = parseShiftCell(
+            actualRaw,
+            cDay.contractHoursPerWeek,
+            cDay.workDaysPerWeek
+          );
           if (!r.ok) {
-            if (raw.trim()) parseErrors.push(`${day}: ${r.error}`);
+            if (actualRaw.trim()) parseErrors.push(`${day}: ${r.error}`);
             continue;
           }
           dayHours += r.hours;
@@ -175,12 +193,13 @@ export async function GET(req: Request) {
 
       const { balance, explanation } = await getBalanceAtPeriodEnd(e.id, toISO);
 
+      const cToday = contractForDate(rowsC, toISO);
       return {
         employeeId: e.id,
         name: e.name,
         workSite: e.workSite,
         workSiteLabel: employeeSiteLabel(e.workSite),
-        contractHoursPerWeek: e.contractHoursPerWeek,
+        contractHoursPerWeek: cToday.contractHoursPerWeek,
         vacationDaysOpenNow: e.vacationDaysOpen,
         istHoursInPeriod: istHours,
         vacationDaysInPeriod: vacationDays,
@@ -195,7 +214,7 @@ export async function GET(req: Request) {
     from: fromISO,
     to: toISO,
     disclaimer:
-      "Keine offizielle Lohnabrechnung. Ist-Stunden aus Ist-Zellen (Standort gemäß Mitarbeiter-Zuordnung Crush/CappuCone/Geteilt); bei Geteilt werden beide Standorte pro Tag summiert; Urlaub = Tagesäquivalente aus „U“ bzw. „U(Stunden)“ in der Ist-Zeile; Stundenkonto gemäß letzter abgeschlossener Woche.",
+      "Keine offizielle Lohnabrechnung. Stunden aus Ist-Zelle, falls leer aus Plan; Urlaub = „U“/„U(h)“ — Ist zählt wenn befüllt, sonst Plan (wie Urlaubskonto im Dienstplan). Stundenkonto gemäß letzter abgeschlossener Woche.",
     rows,
   });
 }

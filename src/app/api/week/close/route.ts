@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
-import { computeWeeklyBalance } from "@/lib/computeWeekly";
+import { computeWeeklyBalanceWithContracts } from "@/lib/computeWeekly";
+import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
 import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
 import { employeeWhereForWorkSite, planOrderByForWorkSite } from "@/lib/workSite";
 import { z } from "zod";
@@ -48,6 +49,11 @@ export async function POST(req: Request) {
       site
     );
 
+    const weekStartISO = formatWeekStart(weekStart);
+    const contractMapClose = await contractRowsMapForEmployees(
+      employees.map((e) => e.id)
+    );
+
     await prisma.$transaction(async (tx) => {
       for (const e of employees) {
         const cellsDb = await tx.shiftCell.findMany({
@@ -59,10 +65,11 @@ export async function POST(req: Request) {
         });
         const arr = Array(7).fill("");
         for (const c of cellsDb) arr[c.dayIndex] = c.rawValue;
-        const { deltaVsContract } = computeWeeklyBalance(
+        const rows = contractMapClose.get(e.id) ?? [];
+        const { deltaVsContract } = computeWeeklyBalanceWithContracts(
           arr,
-          e.contractHoursPerWeek,
-          e.workDaysPerWeek
+          weekStartISO,
+          rows
         );
 
         const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;

@@ -1,3 +1,7 @@
+import { addDaysISO } from "@/lib/dateNav";
+import type { ContractRow } from "@/lib/employeeContract";
+import { contractForDate } from "@/lib/employeeContract";
+
 /**
  * Urlaubstage-Einheiten für Ist-Zeile: nur **U** (nicht Krank **K**).
  * - `U` → 1 Tag
@@ -34,6 +38,63 @@ export function countVacationDaysInWeek(
   let n = 0;
   for (const c of cells) {
     n += vacationDayUnitsFromCell(c, contractHoursPerWeek, workDaysPerWeek);
+  }
+  return n;
+}
+
+/** Pro Tag der Vertrag, der an diesem Kalendertag gilt. */
+export function countVacationDaysInWeekWithContracts(
+  cells: string[],
+  weekStartISO: string,
+  contractRows: ContractRow[]
+): number {
+  let n = 0;
+  for (let i = 0; i < 7; i++) {
+    const dateISO = addDaysISO(weekStartISO, i);
+    const c = contractForDate(contractRows, dateISO);
+    n += vacationDayUnitsFromCell(
+      cells[i] ?? "",
+      c.contractHoursPerWeek,
+      c.workDaysPerWeek
+    );
+  }
+  return n;
+}
+
+/**
+ * Urlaub fürs Konto: pro Tag zählt **Ist**, sobald die Ist-Zelle nicht leer ist
+ * (auch K/ZA — dann kein Plan-Urlaub). Ist leer → **Plan**-Urlaub (nur-Plan-Pflege).
+ */
+export function vacationDayUnitsForDayPlanActual(
+  planRaw: string,
+  actualRaw: string,
+  contractHoursPerWeek: number,
+  workDaysPerWeek: number
+): number {
+  const actualTrim = actualRaw.replace(/\s+/g, " ").trim();
+  if (actualTrim !== "") {
+    return vacationDayUnitsFromCell(actualRaw, contractHoursPerWeek, workDaysPerWeek);
+  }
+  return vacationDayUnitsFromCell(planRaw, contractHoursPerWeek, workDaysPerWeek);
+}
+
+/** Wochensumme mit Plan+Ist-Logik (siehe `vacationDayUnitsForDayPlanActual`). */
+export function countVacationDaysInWeekWithPlanActual(
+  planCells: string[],
+  actualCells: string[],
+  weekStartISO: string,
+  contractRows: ContractRow[]
+): number {
+  let n = 0;
+  for (let i = 0; i < 7; i++) {
+    const dateISO = addDaysISO(weekStartISO, i);
+    const c = contractForDate(contractRows, dateISO);
+    n += vacationDayUnitsForDayPlanActual(
+      planCells[i] ?? "",
+      actualCells[i] ?? "",
+      c.contractHoursPerWeek,
+      c.workDaysPerWeek
+    );
   }
   return n;
 }

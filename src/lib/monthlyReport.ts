@@ -1,7 +1,13 @@
 import { EmployeeSite, ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { parseShiftCellTotalHours, pauseMinutesFromRaw } from "@/lib/parseShiftCell";
-import { vacationDayUnitsFromCell } from "@/lib/vacation";
+import {
+  parseShiftCellTotalHours,
+  parseShiftCellTotalHoursForDate,
+  pauseMinutesFromRaw,
+} from "@/lib/parseShiftCell";
+import { vacationDayUnitsForDayPlanActual } from "@/lib/vacation";
+import { contractForDate } from "@/lib/employeeContract";
+import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
 import {
   addDaysISO,
   dayIndexInWeek,
@@ -281,22 +287,24 @@ export async function buildMonthlyReport(
           where: {
             workWeekId: { in: allWeekIds },
             employeeId,
-            layer: ShiftLayer.ACTUAL,
+            layer: { in: [ShiftLayer.PLAN, ShiftLayer.ACTUAL] },
           },
           select: {
             workWeekId: true,
             dayIndex: true,
+            layer: true,
             rawValue: true,
             note: true,
           },
         });
 
   const rawLookup = new Map<string, { raw: string; note: string }>();
+  const planRawLookup = new Map<string, { raw: string; note: string }>();
   for (const c of cells) {
-    rawLookup.set(`${c.workWeekId}|${c.dayIndex}`, {
-      raw: c.rawValue ?? "",
-      note: c.note ?? "",
-    });
+    const key = `${c.workWeekId}|${c.dayIndex}`;
+    const cell = { raw: c.rawValue ?? "", note: c.note ?? "" };
+    if (c.layer === ShiftLayer.ACTUAL) rawLookup.set(key, cell);
+    if (c.layer === ShiftLayer.PLAN) planRawLookup.set(key, cell);
   }
 
   const holidayRows = await prisma.holiday.findMany({
@@ -312,6 +320,10 @@ export async function buildMonthlyReport(
   const holidayDateSet = new Set(
     holidayRows.map((h) => h.date.toISOString().slice(0, 10))
   );
+
+  const contractMap = await contractRowsMapForEmployees([employeeId]);
+  const contractRows = contractMap.get(employeeId) ?? [];
+  const cReport = contractForDate(contractRows, fromISO);
 
   const dayRows: MonthlyReportDayRow[] = [];
   let sumSoll = 0;
@@ -345,20 +357,26 @@ export async function buildMonthlyReport(
 
     let dayHours = 0;
     let dayVacationUnits = 0;
+    const cDay = contractForDate(contractRows, dayISO);
 
     for (const wid of wids) {
-      const raw = rawLookup.get(`${wid}|${di}`)?.raw ?? "";
-      const vu = vacationDayUnitsFromCell(
-        raw,
-        emp.contractHoursPerWeek,
-        emp.workDaysPerWeek
+      const key = `${wid}|${di}`;
+      const planRaw = planRawLookup.get(key)?.raw ?? "";
+      const actualRaw = rawLookup.get(key)?.raw ?? "";
+      const vu = vacationDayUnitsForDayPlanActual(
+        planRaw,
+        actualRaw,
+        cDay.contractHoursPerWeek,
+        cDay.workDaysPerWeek
       );
       if (vu > 0) {
         dayVacationUnits = vu;
+        const rawForVac =
+          actualRaw.replace(/\s+/g, " ").trim() !== "" ? actualRaw : planRaw;
         dayHours += parseShiftCellTotalHours(
-          raw,
-          emp.contractHoursPerWeek,
-          emp.workDaysPerWeek
+          rawForVac,
+          cDay.contractHoursPerWeek,
+          cDay.workDaysPerWeek
         );
         break;
       }
@@ -366,11 +384,7 @@ export async function buildMonthlyReport(
     if (dayVacationUnits === 0) {
       for (const wid of wids) {
         const raw = rawLookup.get(`${wid}|${di}`)?.raw ?? "";
-        dayHours += parseShiftCellTotalHours(
-          raw,
-          emp.contractHoursPerWeek,
-          emp.workDaysPerWeek
-        );
+        dayHours += parseShiftCellTotalHoursForDate(raw, contractRows, dayISO);
       }
     }
 
@@ -387,8 +401,8 @@ export async function buildMonthlyReport(
 
     const soll = dailyContractHoursForDayIndex(
       di,
-      emp.contractHoursPerWeek,
-      emp.workDaysPerWeek
+      cDay.contractHoursPerWeek,
+      cDay.workDaysPerWeek
     );
     const ist = dayHours;
     const abw = ist - soll;
@@ -434,9 +448,10 @@ export async function buildMonthlyReport(
 
   const { balance: zaEnde } = await getBalanceAtPeriodEnd(employeeId, toISO);
 
+  const cEnd = contractForDate(contractRows, toISO);
   const dailyH =
-    emp.workDaysPerWeek > 0
-      ? emp.contractHoursPerWeek / emp.workDaysPerWeek
+    cEnd.workDaysPerWeek > 0
+      ? cEnd.contractHoursPerWeek / cEnd.workDaysPerWeek
       : 0;
   const urlaubFrac = urlaubSaldoMonatsende - Math.floor(urlaubSaldoMonatsende);
   const urlaubAliquotStd =
@@ -551,8 +566,8 @@ export async function buildMonthlyReport(
       personalNumber: emp.personalNumber,
       entryDate: emp.entryDate ? emp.entryDate.toISOString().slice(0, 10) : null,
       exitDate: emp.exitDate ? emp.exitDate.toISOString().slice(0, 10) : null,
-      contractHoursPerWeek: emp.contractHoursPerWeek,
-      workDaysPerWeek: emp.workDaysPerWeek,
+      contractHoursPerWeek: cReport.contractHoursPerWeek,
+      workDaysPerWeek: cReport.workDaysPerWeek,
     },
     vortrag: {
       zeitausgleichHours: zaVortrag,
