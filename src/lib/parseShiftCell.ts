@@ -9,6 +9,10 @@
  * die Pause in Minuten (dritter Wert). Ohne dritten Wert: **0** Minuten Pause.
  */
 
+import { addDaysISO } from "@/lib/dateNav";
+import type { ContractRow } from "@/lib/employeeContract";
+import { contractForDate } from "@/lib/employeeContract";
+
 export type ParseResult =
   | { ok: true; hours: number; kind: "time" | "uk" | "zaft" | "empty" }
   | { ok: false; error: string };
@@ -168,4 +172,39 @@ export function sumParsedWeekHours(
     else total += r.hours;
   }
   return { hours: total, errors };
+}
+
+/** Pro Kalendertag der Vertrag, der an diesem Tag gilt (Wechsel mitten in der Woche möglich). */
+export function sumParsedWeekHoursWithContracts(
+  cells: string[],
+  weekStartISO: string,
+  contractRows: ContractRow[]
+): { hours: number; errors: string[] } {
+  const errors: string[] = [];
+  let total = 0;
+  for (let i = 0; i < 7; i++) {
+    const dateISO = addDaysISO(weekStartISO, i);
+    const c = contractForDate(contractRows, dateISO);
+    const r = parseShiftCell(
+      cells[i] ?? "",
+      c.contractHoursPerWeek,
+      c.workDaysPerWeek
+    );
+    if (!r.ok) errors.push(`Tag ${i + 1}: ${r.error}`);
+    else total += r.hours;
+  }
+  return { hours: total, errors };
+}
+
+export function parseShiftCellTotalHoursForDate(
+  raw: string,
+  contractRows: ContractRow[],
+  dateISO: string
+): number {
+  const c = contractForDate(contractRows, dateISO);
+  return parseShiftCellTotalHours(
+    raw,
+    c.contractHoursPerWeek,
+    c.workDaysPerWeek
+  );
 }
