@@ -6,6 +6,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 type WorkSiteVal = "CRUSH" | "CAPPUCONE" | "SHARED";
 
 type ContractSlice = {
+  id?: string;
   effectiveFrom: string;
   contractHoursPerWeek: number;
   workDaysPerWeek: number;
@@ -103,6 +104,8 @@ export function MitarbeiterVerwaltung() {
   const [form, setForm] = useState<EmployeeFormState>(emptyForm);
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EmployeeFormState>(emptyForm);
+  const [contractDeletingId, setContractDeletingId] = useState<string | null>(null);
+  const [employeeDeletingId, setEmployeeDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -278,6 +281,58 @@ export function MitarbeiterVerwaltung() {
     }
     setMsg("Wieder aktiv.");
     await load();
+  }
+
+  async function deleteContractRow(employeeId: string, contractId: string) {
+    if (
+      !confirm(
+        "Diesen Vertragsstand wirklich entfernen? Die Historie wird angepasst."
+      )
+    ) {
+      return;
+    }
+    setMsg(null);
+    setContractDeletingId(contractId);
+    try {
+      const res = await fetch(
+        `/api/employees/${employeeId}/contracts/${contractId}`,
+        { method: "DELETE" }
+      );
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setMsg(j.error ?? "Vertragsstand konnte nicht gelöscht werden.");
+        return;
+      }
+      setMsg("Vertragsstand entfernt.");
+      await load();
+    } finally {
+      setContractDeletingId(null);
+    }
+  }
+
+  async function deleteEmployeePermanent(id: string, name: string) {
+    if (
+      !confirm(
+        `Mitarbeiter „${name}“ endgültig löschen?\n\nAlle zugehörigen Dienstplan-Zellen und Kontoeinträge werden unwiderruflich entfernt.`
+      )
+    ) {
+      return;
+    }
+    setMsg(null);
+    setEmployeeDeletingId(id);
+    try {
+      const res = await fetch(`/api/employees/${id}`, { method: "DELETE" });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setMsg(j.error ?? "Löschen fehlgeschlagen.");
+        return;
+      }
+      if (editId === id) setEditId(null);
+      setMsg("Mitarbeiter gelöscht.");
+      await load();
+    } finally {
+      setEmployeeDeletingId(null);
+    }
   }
 
   function siteLabel(v: WorkSiteVal) {
@@ -486,7 +541,7 @@ export function MitarbeiterVerwaltung() {
                       {emp.active ? "Ja" : "Nein"}
                     </td>
                     <td className="border border-slate-200 px-2 py-1">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <button
                           type="button"
                           onClick={() => startEdit(emp)}
@@ -494,6 +549,9 @@ export function MitarbeiterVerwaltung() {
                         >
                           Bearbeiten
                         </button>
+                        <span className="text-slate-300 select-none" aria-hidden>
+                          |
+                        </span>
                         {emp.active ? (
                           <button
                             type="button"
@@ -511,6 +569,19 @@ export function MitarbeiterVerwaltung() {
                             Aktivieren
                           </button>
                         )}
+                        <span className="text-slate-300 select-none" aria-hidden>
+                          |
+                        </span>
+                        <button
+                          type="button"
+                          disabled={employeeDeletingId === emp.id}
+                          onClick={() => void deleteEmployeePermanent(emp.id, emp.name)}
+                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-[15px] font-light leading-none text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-40"
+                          title="Endgültig löschen"
+                          aria-label={`${emp.name} endgültig löschen`}
+                        >
+                          ×
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -614,19 +685,41 @@ export function MitarbeiterVerwaltung() {
                           {emp.contracts && emp.contracts.length > 0 && (
                             <div className="md:col-span-2 lg:col-span-3 rounded border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
                               <p className="font-semibold text-slate-800">Vertragsstände (Historie)</p>
-                              <ul className="mt-1 list-inside list-disc space-y-0.5">
+                              <ul className="mt-1 space-y-0.5">
                                 {[...emp.contracts]
                                   .sort((a, b) =>
                                     normIsoDate(a.effectiveFrom).localeCompare(
                                       normIsoDate(b.effectiveFrom)
                                     )
                                   )
-                                  .map((c) => (
-                                    <li key={normIsoDate(c.effectiveFrom)}>
-                                      ab {isoDateToDE(c.effectiveFrom)}: {c.contractHoursPerWeek}{" "}
-                                      h / {c.workDaysPerWeek} T
-                                    </li>
-                                  ))}
+                                  .map((c) => {
+                                    const cid = c.id;
+                                    return (
+                                      <li
+                                        key={cid ?? normIsoDate(c.effectiveFrom)}
+                                        className="flex flex-wrap items-center gap-1.5"
+                                      >
+                                        <span>
+                                          ab {isoDateToDE(c.effectiveFrom)}:{" "}
+                                          {c.contractHoursPerWeek} h / {c.workDaysPerWeek} T
+                                        </span>
+                                        {cid ? (
+                                          <button
+                                            type="button"
+                                            disabled={contractDeletingId === cid}
+                                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-[15px] font-light leading-none text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-40"
+                                            title="Vertragsstand entfernen"
+                                            aria-label="Vertragsstand entfernen"
+                                            onClick={() =>
+                                              void deleteContractRow(emp.id, cid)
+                                            }
+                                          >
+                                            ×
+                                          </button>
+                                        ) : null}
+                                      </li>
+                                    );
+                                  })}
                               </ul>
                             </div>
                           )}

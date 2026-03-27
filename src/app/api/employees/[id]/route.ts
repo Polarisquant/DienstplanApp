@@ -54,6 +54,22 @@ function toContractRows(
   }));
 }
 
+export async function DELETE(_req: Request, context: Params) {
+  try {
+    const { id } = context.params;
+    await prisma.employee.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  } catch (e: unknown) {
+    const code =
+      e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+    if (code === "P2025") {
+      return NextResponse.json({ error: "Mitarbeiter nicht gefunden." }, { status: 404 });
+    }
+    console.error(e);
+    return NextResponse.json({ error: "Löschen fehlgeschlagen." }, { status: 500 });
+  }
+}
+
 export async function PATCH(req: Request, context: Params) {
   try {
     const { id } = context.params;
