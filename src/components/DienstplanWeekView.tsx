@@ -21,6 +21,8 @@ type UiWorkSite = "CRUSH" | "CAPPUCONE";
 
 const SITE_STORAGE_KEY = "dienstplan-active-site";
 const WEATHER_STORAGE_KEY = "dienstplan-show-weather";
+/** Geteilte Mitarbeiter (SHARED) in der Tabelle ausblenden */
+const HIDE_SHARED_STORAGE_KEY = "dienstplan-hide-shared";
 
 type WeatherApiResponse = {
   weekStart: string;
@@ -288,6 +290,7 @@ export function DienstplanWeekView() {
   const [weatherData, setWeatherData] = useState<WeatherApiResponse | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherErr, setWeatherErr] = useState<string | null>(null);
+  const [hideSharedEmployees, setHideSharedEmployees] = useState(false);
 
   useEffect(() => {
     try {
@@ -309,6 +312,15 @@ export function DienstplanWeekView() {
 
   useEffect(() => {
     try {
+      const h = localStorage.getItem(HIDE_SHARED_STORAGE_KEY);
+      if (h === "1") setHideSharedEmployees(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(SITE_STORAGE_KEY, workSite);
     } catch {
       /* ignore */
@@ -322,6 +334,14 @@ export function DienstplanWeekView() {
       /* ignore */
     }
   }, [showWeather]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HIDE_SHARED_STORAGE_KEY, hideSharedEmployees ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [hideSharedEmployees]);
 
   useEffect(() => {
     if (!showWeather) {
@@ -705,8 +725,10 @@ export function DienstplanWeekView() {
   }
 
   /** Reihenfolge der Zeilen pro Standort (Crush / CappuCone getrennt); speichert nur Sortierung, nicht den Raster. */
-  async function moveEmployeeRow(index: number, dir: -1 | 1) {
+  async function moveEmployeeRow(employeeId: string, dir: -1 | 1) {
     if (!data || data.status === "CLOSED") return;
+    const index = data.rows.findIndex((r) => r.employee.id === employeeId);
+    if (index < 0) return;
     const newIndex = index + dir;
     if (newIndex < 0 || newIndex >= data.rows.length) return;
 
@@ -744,6 +766,9 @@ export function DienstplanWeekView() {
 
   function downloadLayerCsv() {
     if (!data) return;
+    const rows = hideSharedEmployees
+      ? data.rows.filter((r) => r.employee.workSite !== "SHARED")
+      : data.rows;
     const isPlan = layer === "PLAN";
     const sep = ";";
     const daySuffix = isPlan ? "Plan" : "Ist";
@@ -756,7 +781,7 @@ export function DienstplanWeekView() {
     }
     header.push(isPlan ? "WS_Plan" : "WS_Ist", "ZAG", "o_U_Tage");
     const lines = [header.join(sep)];
-    for (const r of data.rows) {
+    for (const r of rows) {
       const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
       const label = `${r.employee.name}${siteHint}`;
       let row: string[];
@@ -813,6 +838,9 @@ export function DienstplanWeekView() {
 
   function openLayerEmailDraft() {
     if (!data) return;
+    const rows = hideSharedEmployees
+      ? data.rows.filter((r) => r.employee.workSite !== "SHARED")
+      : data.rows;
     const isPlan = layer === "PLAN";
     const layerDe = isPlan ? "Plan" : "Ist";
     const site = workSiteLabel(data.site ?? workSite);
@@ -824,7 +852,7 @@ export function DienstplanWeekView() {
       "—",
       "",
     ];
-    for (const r of data.rows) {
+    for (const r of rows) {
       const siteHint = r.employee.workSite === "SHARED" ? " · geteilt" : "";
       const name = `${r.employee.name}${siteHint}`;
       if (isPlan) {
@@ -896,6 +924,19 @@ export function DienstplanWeekView() {
     [data?.days]
   );
 
+  const displayRows = useMemo(() => {
+    if (!data) return [];
+    if (!hideSharedEmployees) return data.rows;
+    return data.rows.filter((r) => r.employee.workSite !== "SHARED");
+  }, [data, hideSharedEmployees]);
+
+  useEffect(() => {
+    if (!laborOpenEmp) return;
+    if (!displayRows.some((r) => r.employee.id === laborOpenEmp)) {
+      setLaborOpenEmp(null);
+    }
+  }, [displayRows, laborOpenEmp]);
+
   const liveLaborByEmp = useMemo(() => {
     const m = new Map<
       string,
@@ -926,7 +967,7 @@ export function DienstplanWeekView() {
     if (!data) return { warnings: 0, byEmp: new Map<string, number>() };
     let warnings = 0;
     const byEmp = new Map<string, number>();
-    for (const r of data.rows) {
+    for (const r of displayRows) {
       const live = liveLaborByEmp.get(r.employee.id);
       const hints =
         layer === "PLAN" ? (live?.plan ?? []) : (live?.actual ?? []);
@@ -935,7 +976,7 @@ export function DienstplanWeekView() {
       warnings += w;
     }
     return { warnings, byEmp };
-  }, [data, layer, liveLaborByEmp]);
+  }, [data, layer, liveLaborByEmp, displayRows]);
 
   const weatherDaysAligned = useMemo(() => {
     if (!data?.days || !weatherData?.days?.length) return null;
@@ -992,6 +1033,18 @@ export function DienstplanWeekView() {
             <span className="text-xs text-slate-500">
               ({workSiteLabel(workSite)} — nur zugeordnete Mitarbeiter)
             </span>
+            <button
+              type="button"
+              onClick={() => setHideSharedEmployees((h) => !h)}
+              className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                hideSharedEmployees
+                  ? "border-slate-600 bg-slate-700 text-white shadow-sm"
+                  : "border-slate-300/80 bg-white/80 text-slate-600 shadow-sm hover:bg-slate-50"
+              }`}
+              title="Mitarbeiter mit Standort ‚Geteilt (beide Standorte)‘ in der Tabelle aus- oder einblenden"
+            >
+              {hideSharedEmployees ? "Geteilte einblenden" : "Geteilte ausblenden"}
+            </button>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1315,7 +1368,7 @@ export function DienstplanWeekView() {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r, rowIndex) => {
+                {displayRows.map((r) => {
                   const g = grid[r.employee.id] ?? emptyGridRow();
                   const planCells = g.plan.length ? g.plan : r.plan;
                   const actualCells = g.actual.length ? g.actual : r.actual;
@@ -1360,7 +1413,9 @@ export function DienstplanWeekView() {
                   const laborExpanded = laborOpenEmp === r.employee.id;
                   const reorderDisabled =
                     readOnly || reorderBusy || saving || loading;
-                  const rowCount = data.rows.length;
+                  const fullIndex = data.rows.findIndex(
+                    (x) => x.employee.id === r.employee.id
+                  );
 
                   return (
                     <tr key={r.employee.id} className="border-b border-slate-200 align-top">
@@ -1371,20 +1426,24 @@ export function DienstplanWeekView() {
                               <button
                                 type="button"
                                 className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
-                                disabled={reorderDisabled || rowIndex === 0}
+                                disabled={reorderDisabled || fullIndex <= 0}
                                 aria-label="Zeile nach oben"
                                 title="Nach oben"
-                                onClick={() => void moveEmployeeRow(rowIndex, -1)}
+                                onClick={() => void moveEmployeeRow(r.employee.id, -1)}
                               >
                                 ↑
                               </button>
                               <button
                                 type="button"
                                 className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
-                                disabled={reorderDisabled || rowIndex >= rowCount - 1}
+                                disabled={
+                                  reorderDisabled ||
+                                  fullIndex < 0 ||
+                                  fullIndex >= data.rows.length - 1
+                                }
                                 aria-label="Zeile nach unten"
                                 title="Nach unten"
-                                onClick={() => void moveEmployeeRow(rowIndex, 1)}
+                                onClick={() => void moveEmployeeRow(r.employee.id, 1)}
                               >
                                 ↓
                               </button>
@@ -1495,7 +1554,7 @@ export function DienstplanWeekView() {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r) => {
+                {displayRows.map((r) => {
                   const siteHint =
                     r.employee.workSite === "SHARED" ? " · geteilt" : "";
                   const printLabel = `${r.employee.name}${siteHint}`;
@@ -1590,9 +1649,9 @@ export function DienstplanWeekView() {
             </table>
           </article>
 
-          {data.rows.some((r) => laborOpenEmp === r.employee.id) && (
+          {displayRows.some((r) => laborOpenEmp === r.employee.id) && (
             <div className="no-print mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
-              {data.rows
+              {displayRows
                 .filter((r) => laborOpenEmp === r.employee.id)
                 .map((r) => {
                   const liveH = liveLaborByEmp.get(r.employee.id);
@@ -1625,7 +1684,9 @@ export function DienstplanWeekView() {
             </div>
           )}
 
-          <div className="no-print">{errsBlockLive(data, grid, layer)}</div>
+          <div className="no-print">
+            {errsBlockLive(data, grid, layer, displayRows)}
+          </div>
 
           <div className="no-print mt-4 flex flex-wrap gap-2">
             <button
@@ -1682,9 +1743,10 @@ export function DienstplanWeekView() {
 function errsBlockLive(
   data: WeekPayload,
   grid: Record<string, GridRow>,
-  layer: Layer
+  layer: Layer,
+  rows: WeekPayload["rows"]
 ) {
-  const lines = data.rows.flatMap((r) => {
+  const lines = rows.flatMap((r) => {
     const g = grid[r.employee.id];
     const cells =
       layer === "PLAN"
