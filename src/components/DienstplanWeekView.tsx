@@ -1,7 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   addDaysISO,
   defaultWeekStartISO,
@@ -14,6 +20,10 @@ import {
 } from "@/lib/computeWeekly";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
 import { contractForDate, type ContractRow } from "@/lib/employeeContract";
+import {
+  shiftAbbrevUiKind,
+  type ShiftAbbrevUiKind,
+} from "@/lib/parseShiftCell";
 import { WeekWeatherSkeleton, WeekWeatherStrip } from "@/components/WeekWeatherStrip";
 
 type Layer = "PLAN" | "ACTUAL";
@@ -132,6 +142,209 @@ type GridRow = {
 };
 
 const SHORT_DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+
+const ABBREV_BADGE: Record<
+  ShiftAbbrevUiKind,
+  { chip: string; title: string; printBg: string }
+> = {
+  u: {
+    chip: "bg-emerald-600 ring-1 ring-emerald-800/20",
+    title: "Urlaub (U)",
+    printBg: "bg-emerald-100",
+  },
+  k: {
+    chip: "bg-rose-600 ring-1 ring-rose-900/20",
+    title: "Krankheit (K)",
+    printBg: "bg-rose-100",
+  },
+  f: {
+    chip: "bg-amber-600 ring-1 ring-amber-900/25",
+    title: "Feiertag (F / FT / Feiertag)",
+    printBg: "bg-amber-100",
+  },
+  z: {
+    chip: "bg-violet-600 ring-1 ring-violet-900/20",
+    title: "Zeitausgleich (ZA)",
+    printBg: "bg-violet-100",
+  },
+};
+
+function rotaShiftCellShellClasses(kind: ShiftAbbrevUiKind | null): string {
+  const base = "border-2 border-slate-400";
+  if (!kind) return `${base} bg-white`;
+  switch (kind) {
+    case "u":
+      return `${base} border-l-[6px] border-l-emerald-600 bg-emerald-50/90`;
+    case "k":
+      return `${base} border-l-[6px] border-l-rose-600 bg-rose-50/90`;
+    case "f":
+      return `${base} border-l-[6px] border-l-amber-600 bg-amber-50/95`;
+    case "z":
+      return `${base} border-l-[6px] border-l-violet-600 bg-violet-50/90`;
+  }
+}
+
+function rotaAbbrevMarkChar(kind: ShiftAbbrevUiKind): string {
+  switch (kind) {
+    case "u":
+      return "U";
+    case "k":
+      return "K";
+    case "f":
+      return "F";
+    case "z":
+      return "Z";
+  }
+}
+
+function rotaPrintCellClass(raw: string): string {
+  const k = shiftAbbrevUiKind(raw ?? "");
+  const base =
+    "border-2 border-slate-500 px-1 py-1 align-top text-[11px] font-semibold leading-snug text-slate-900 print:text-xs";
+  if (!k) return base;
+  return `${base} ${ABBREV_BADGE[k].printBg}`;
+}
+
+function rotaAbbrevCaretClass(kind: ShiftAbbrevUiKind): string {
+  switch (kind) {
+    case "u":
+      return "caret-emerald-800";
+    case "k":
+      return "caret-rose-900";
+    case "f":
+      return "caret-amber-950";
+    case "z":
+      return "caret-violet-900";
+  }
+}
+
+type RotaDayCellProps = {
+  dayShort: string;
+  readOnly: boolean;
+  val: string;
+  note: string;
+  onValChange: (v: string) => void;
+  onNoteChange: (v: string) => void;
+};
+
+/**
+ * Schichtzelle: Abkürzung U/K/F/Z als ein farbiges Kästchen (Text im Feld unsichtbar bis Fokus).
+ * Notiz: volle Höhe für die Zeit, zweite Zeile nur bei Inhalt oder nach kleinem „+“ unten rechts.
+ */
+function RotaDayCell({
+  dayShort,
+  readOnly,
+  val,
+  note,
+  onValChange,
+  onNoteChange,
+}: RotaDayCellProps) {
+  const abbrKind = shiftAbbrevUiKind(val ?? "");
+  const shell = rotaShiftCellShellClasses(abbrKind);
+  const badgeMeta = abbrKind ? ABBREV_BADGE[abbrKind] : null;
+  const [shiftFocused, setShiftFocused] = useState(false);
+  const noteRef = useRef<HTMLInputElement>(null);
+  const hasNote = (note ?? "").trim().length > 0;
+  const [noteRowVisible, setNoteRowVisible] = useState(hasNote);
+
+  useEffect(() => {
+    if (hasNote) setNoteRowVisible(true);
+  }, [hasNote]);
+
+  const showAbbrevTile =
+    Boolean(abbrKind && badgeMeta) &&
+    (readOnly || !shiftFocused);
+
+  const shiftMinH = noteRowVisible ? "min-h-[2.35rem]" : "min-h-[3.65rem]";
+
+  const dis = readOnly ? "disabled:bg-slate-100/80 disabled:opacity-95" : "";
+  let shiftClass = `w-full min-w-[6.5rem] rounded-md border-2 px-2 py-1 text-[15px] font-semibold outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] ${shiftMinH} ${dis}`;
+
+  if (!abbrKind) {
+    shiftClass += showAbbrevTile
+      ? ""
+      : ` border-slate-400 bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-medium`;
+  } else if (showAbbrevTile) {
+    shiftClass += ` border-transparent bg-transparent text-transparent shadow-none ${rotaAbbrevCaretClass(abbrKind)}`;
+  } else {
+    const col =
+      abbrKind === "u"
+        ? "border-emerald-400/90 bg-white/95 text-emerald-950"
+        : abbrKind === "k"
+          ? "border-rose-400/90 bg-white/95 text-rose-950"
+          : abbrKind === "f"
+            ? "border-amber-400/90 bg-white/95 text-amber-950"
+            : "border-violet-400/90 bg-white/95 text-violet-950";
+    shiftClass += ` ${col}`;
+  }
+
+  function openNoteRow() {
+    setNoteRowVisible(true);
+    queueMicrotask(() => noteRef.current?.focus());
+  }
+
+  function onNoteBlur() {
+    if ((noteRef.current?.value ?? "").trim() === "") {
+      setNoteRowVisible(false);
+    }
+  }
+
+  return (
+    <td className={`relative p-0 align-stretch ${shell}`}>
+      <div className="flex h-full min-h-0 flex-col gap-1 p-1 pb-3">
+        <div className={`relative min-w-0 flex-1 ${noteRowVisible ? "" : "min-h-[3.65rem]"}`}>
+          {showAbbrevTile && badgeMeta ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center"
+              aria-hidden
+            >
+              <span
+                className={`flex h-11 w-11 items-center justify-center rounded-lg text-xl font-bold leading-none text-white shadow-md ${badgeMeta.chip}`}
+                title={badgeMeta.title}
+              >
+                {rotaAbbrevMarkChar(abbrKind!)}
+              </span>
+            </div>
+          ) : null}
+          <input
+            disabled={readOnly}
+            value={val}
+            onChange={(e) => onValChange(e.target.value)}
+            onFocus={() => setShiftFocused(true)}
+            onBlur={() => setShiftFocused(false)}
+            className={`relative z-10 box-border ${shiftClass}`}
+            title={badgeMeta?.title}
+            aria-label={`Schicht ${dayShort}${badgeMeta ? `, ${badgeMeta.title}` : ""}`}
+          />
+        </div>
+        {noteRowVisible ? (
+          <input
+            ref={noteRef}
+            disabled={readOnly}
+            value={note ?? ""}
+            onChange={(e) => onNoteChange(e.target.value)}
+            onBlur={onNoteBlur}
+            className="h-7 w-full min-w-[6.5rem] shrink-0 rounded-md border-2 border-dashed border-slate-400 bg-slate-100/90 px-2 text-[12px] font-medium text-slate-800 outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] disabled:bg-slate-200/80"
+            aria-label={`Notiz ${dayShort}`}
+            placeholder="Notiz …"
+            maxLength={2000}
+          />
+        ) : null}
+      </div>
+      {!noteRowVisible && !readOnly ? (
+        <button
+          type="button"
+          onClick={openNoteRow}
+          className="absolute bottom-px right-px z-20 flex h-3.5 min-w-[0.85rem] items-center justify-center rounded px-[1px] text-[9px] font-semibold leading-none text-slate-400 hover:bg-slate-200/70 hover:text-slate-600"
+          aria-label="Notiz hinzufügen"
+          title="Notiz hinzufügen"
+        >
+          +
+        </button>
+      ) : null}
+    </td>
+  );
+}
 
 /** Kopfzeile: Feiertag amber; Ferien Start/Ende zusätzlich Ring; nur Ferien „dazwischen“ sehr leicht. */
 function dayHeaderHighlightClasses(d: DayMeta): string {
@@ -1302,17 +1515,17 @@ export function DienstplanWeekView() {
             </div>
           )}
 
-          <div className="no-print overflow-x-auto rounded-xl border border-[var(--rota-border)] bg-white shadow-sm">
-            <table className="min-w-[980px] w-full border-collapse text-sm">
+          <div className="no-print overflow-x-auto rounded-xl border-2 border-[var(--rota-border)] bg-white shadow-md">
+            <table className="min-w-[980px] w-full border-collapse text-[15px]">
               <thead>
                 <tr className="bg-[var(--rota-header)] text-white">
-                  <th className="border border-white/20 px-2 py-2 text-left font-semibold">
+                  <th className="border-2 border-white/35 px-2 py-2.5 text-left text-base font-bold tracking-tight">
                     Mitarbeiter
                   </th>
                   {data.days.map((d, i) => (
                     <th
                       key={d.dateISO}
-                      className={`border border-white/20 px-1 py-2 text-center font-semibold ${dayHeaderHighlightClasses(d)}`}
+                      className={`border-2 border-white/35 px-1 py-2.5 text-center text-sm font-bold leading-tight ${dayHeaderHighlightClasses(d)}`}
                     >
                       <div>
                         {SHORT_DAYS[i]} {d.dateISO.split("-").reverse().join(".")}
@@ -1355,13 +1568,13 @@ export function DienstplanWeekView() {
                     </th>
                   ))}
                   <th
-                    className="border border-white/20 px-2 py-2"
+                    className="border-2 border-white/35 px-2 py-2.5 text-base font-bold"
                     title="Summe Netto-Stunden (Anwesenheit minus Pause je Tag)"
                   >
                     WS
                   </th>
                   <th
-                    className="border border-white/20 px-2 py-2"
+                    className="border-2 border-white/35 px-2 py-2.5 text-base font-bold"
                     title={
                       layer === "PLAN"
                         ? "Plan-Vorschau: Saldo vor dieser Woche + (Plan-Summe − Vertrags-Soll)"
@@ -1371,12 +1584,14 @@ export function DienstplanWeekView() {
                     ZAG
                   </th>
                   <th
-                    className="border border-white/20 px-2 py-2"
+                    className="border-2 border-white/35 px-2 py-2.5 text-base font-bold"
                     title="Offener Urlaub: Vorschau nach Plan/Ist dieser Woche (gegenüber zuletzt geladenem Speicherstand)"
                   >
                     o. U.
                   </th>
-                  <th className="border border-white/20 px-2 py-2 text-center">AT</th>
+                  <th className="border-2 border-white/35 px-2 py-2.5 text-center text-base font-bold">
+                    AT
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1432,8 +1647,8 @@ export function DienstplanWeekView() {
                   );
 
                   return (
-                    <tr key={r.employee.id} className="border-b border-slate-200 align-top">
-                      <td className="border border-slate-200 bg-[var(--rota-rail)] px-1 py-1 font-medium text-slate-800">
+                    <tr key={r.employee.id} className="border-b-2 border-slate-400 align-top">
+                      <td className="border-2 border-slate-400 bg-[var(--rota-rail)] px-1.5 py-1.5 text-[15px] font-semibold text-slate-900">
                         <div className="flex items-start gap-1.5">
                           {!readOnly ? (
                             <div className="no-print flex shrink-0 flex-col gap-0 border-r border-slate-200/80 pr-1">
@@ -1467,32 +1682,22 @@ export function DienstplanWeekView() {
                         </div>
                       </td>
                       {displayCells.map((val, di) => (
-                        <td key={di} className="border border-slate-200 p-0">
-                          <div className="flex flex-col gap-0.5 p-0.5">
-                            <input
-                              disabled={readOnly}
-                              value={val}
-                              onChange={(e) => setCell(r.employee.id, di, e.target.value)}
-                              className="h-9 w-full min-w-[6.5rem] rounded border border-slate-200 bg-white px-1.5 text-sm outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] disabled:bg-slate-100"
-                              aria-label={`Schicht ${SHORT_DAYS[di]}`}
-                            />
-                            <input
-                              disabled={readOnly}
-                              value={displayNotes[di] ?? ""}
-                              onChange={(e) => setNote(r.employee.id, di, e.target.value)}
-                              className="h-7 w-full min-w-[6.5rem] rounded border border-dashed border-slate-300 bg-slate-50/80 px-1.5 text-[11px] text-slate-700 outline-none focus:ring-1 focus:ring-[var(--rota-header)] disabled:bg-slate-100"
-                              aria-label={`Notiz ${SHORT_DAYS[di]}`}
-                              maxLength={2000}
-                            />
-                          </div>
-                        </td>
+                        <RotaDayCell
+                          key={di}
+                          dayShort={SHORT_DAYS[di] ?? ""}
+                          readOnly={readOnly}
+                          val={val}
+                          note={displayNotes[di] ?? ""}
+                          onValChange={(v) => setCell(r.employee.id, di, v)}
+                          onNoteChange={(n) => setNote(r.employee.id, di, n)}
+                        />
                       ))}
-                      <td className="border border-slate-200 px-2 text-right tabular-nums">
+                      <td className="border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900">
                         {fmt.format(weeklyHoursShown)}
                       </td>
                       <td
-                        className={`border border-slate-200 px-2 text-right tabular-nums ${
-                          zagLive < 0 ? "text-red-600" : ""
+                        className={`border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums ${
+                          zagLive < 0 ? "text-red-700" : "text-slate-900"
                         }`}
                         title={
                           layer === "PLAN"
@@ -1502,10 +1707,10 @@ export function DienstplanWeekView() {
                       >
                         {fmt.format(zagLive)}
                       </td>
-                      <td className="border border-slate-200 px-2 text-right tabular-nums">
+                      <td className="border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900">
                         {fmtVacDays.format(vacationShown)} T
                       </td>
-                      <td className="border border-slate-200 px-1 text-center">
+                      <td className="border-2 border-slate-400 bg-slate-50/80 px-1 py-1.5 text-center">
                         {warnN > 0 ? (
                           <button
                             type="button"
@@ -1546,25 +1751,25 @@ export function DienstplanWeekView() {
                 </>
               ) : null}
             </p>
-            <table className="w-full border-collapse border border-slate-500 text-[10px] print:text-xs">
+            <table className="w-full border-collapse border-2 border-slate-600 text-[10px] print:text-xs">
               <thead>
-                <tr className="bg-slate-100">
-                  <th className="border border-slate-400 px-1 py-1 text-left font-semibold">
+                <tr className="bg-slate-200">
+                  <th className="border-2 border-slate-500 px-1 py-1 text-left text-xs font-bold">
                     Mitarbeiter
                   </th>
                   {data.days.map((d, i) => (
                     <th
                       key={`print-h-${d.dateISO}`}
-                      className="border border-slate-400 px-1 py-1 text-center font-semibold"
+                      className="border-2 border-slate-500 px-1 py-1 text-center text-xs font-bold"
                     >
                       {SHORT_DAYS[i]} {d.dateISO.split("-").reverse().join(".")}
                     </th>
                   ))}
-                  <th className="border border-slate-400 px-1 py-1 font-semibold">
+                  <th className="border-2 border-slate-500 px-1 py-1 text-xs font-bold">
                     {layer === "PLAN" ? "WS Plan" : "WS Ist"}
                   </th>
-                  <th className="border border-slate-400 px-1 py-1 font-semibold">ZAG</th>
-                  <th className="border border-slate-400 px-1 py-1 font-semibold">o. U.</th>
+                  <th className="border-2 border-slate-500 px-1 py-1 text-xs font-bold">ZAG</th>
+                  <th className="border-2 border-slate-500 px-1 py-1 text-xs font-bold">o. U.</th>
                 </tr>
               </thead>
               <tbody>
@@ -1585,33 +1790,30 @@ export function DienstplanWeekView() {
                     const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
                     return (
                       <tr key={`print-${r.employee.id}`}>
-                        <td className="border border-slate-400 px-1 py-1 align-top font-medium">
+                        <td className="border-2 border-slate-500 px-1 py-1 align-top text-xs font-semibold">
                           {printLabel}
                         </td>
                         {plan.map((cell, di) => (
-                          <td
-                            key={di}
-                            className="border border-slate-400 px-1 py-1 align-top text-slate-900"
-                          >
+                          <td key={di} className={rotaPrintCellClass(cell ?? "")}>
                             <div>{(cell ?? "").trim() || "—"}</div>
                             {(planNotes[di] ?? "").trim() ? (
-                              <div className="text-[9px] text-slate-600">
+                              <div className="mt-0.5 text-[9px] font-medium text-slate-700">
                                 {(planNotes[di] ?? "").trim()}
                               </div>
                             ) : null}
                           </td>
                         ))}
-                        <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                        <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                           {fmt.format(livePlan.weeklyHours)}
                         </td>
                         <td
-                          className={`border border-slate-400 px-1 py-1 text-right tabular-nums ${
-                            zagP < 0 ? "text-red-700" : ""
+                          className={`border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums ${
+                            zagP < 0 ? "text-red-800" : ""
                           }`}
                         >
                           {fmt.format(zagP)}
                         </td>
-                        <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                        <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                           {fmtVacDays.format(vacPrev)} T
                         </td>
                       </tr>
@@ -1629,33 +1831,30 @@ export function DienstplanWeekView() {
                   const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
                   return (
                     <tr key={`print-${r.employee.id}`}>
-                      <td className="border border-slate-400 px-1 py-1 align-top font-medium">
+                      <td className="border-2 border-slate-500 px-1 py-1 align-top text-xs font-semibold">
                         {printLabel}
                       </td>
                       {actual.map((cell, di) => (
-                        <td
-                          key={di}
-                          className="border border-slate-400 px-1 py-1 align-top text-slate-900"
-                        >
+                        <td key={di} className={rotaPrintCellClass(cell ?? "")}>
                           <div>{(cell ?? "").trim() || "—"}</div>
                           {(actualNotes[di] ?? "").trim() ? (
-                            <div className="text-[9px] text-slate-600">
+                            <div className="mt-0.5 text-[9px] font-medium text-slate-700">
                               {(actualNotes[di] ?? "").trim()}
                             </div>
                           ) : null}
                         </td>
                       ))}
-                      <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                      <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                         {fmt.format(liveActual.weeklyHours)}
                       </td>
                       <td
-                        className={`border border-slate-400 px-1 py-1 text-right tabular-nums ${
-                          zagP < 0 ? "text-red-700" : ""
+                        className={`border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums ${
+                          zagP < 0 ? "text-red-800" : ""
                         }`}
                       >
                         {fmt.format(zagP)}
                       </td>
-                      <td className="border border-slate-400 px-1 py-1 text-right tabular-nums">
+                      <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                         {fmtVacDays.format(vacPrevI)} T
                       </td>
                     </tr>
@@ -1733,7 +1932,41 @@ export function DienstplanWeekView() {
             )}
           </div>
 
-          <p className="no-print mt-4 text-xs text-slate-500">
+          <div className="no-print mt-4 rounded-lg border-2 border-slate-400 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 shadow-sm">
+            <p className="font-bold text-slate-700">Farben &amp; Zeichen in den Schichtzellen</p>
+            <ul className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1">
+              <li className="inline-flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded bg-emerald-600 text-[11px] font-bold text-white shadow-sm">
+                  U
+                </span>
+                <span>Urlaub (grün)</span>
+              </li>
+              <li className="inline-flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded bg-rose-600 text-[11px] font-bold text-white shadow-sm">
+                  K
+                </span>
+                <span>Krankheit (rot)</span>
+              </li>
+              <li className="inline-flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded bg-amber-600 text-[11px] font-bold text-white shadow-sm">
+                  F
+                </span>
+                <span>Feiertag · <code>F</code> / <code>FT</code> / Feiertag (amber)</span>
+              </li>
+              <li className="inline-flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded bg-violet-600 text-[11px] font-bold text-white shadow-sm">
+                  Z
+                </span>
+                <span>Zeitausgleich · <code>ZA</code> (violett)</span>
+              </li>
+            </ul>
+            <p className="mt-1.5 text-[11px] font-normal text-slate-600">
+              Zeit-Eingaben bleiben neutral (weiß); Mehrfachblöcke mit <code>|</code> ohne einheitliches Kürzel
+              werden nicht eingefärbt. Kürzel bearbeiten: Zelle fokussieren — dann erscheint der Text wieder.
+            </p>
+          </div>
+
+          <p className="no-print mt-4 text-xs font-medium text-slate-600">
             Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
             <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
             <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
@@ -1744,7 +1977,9 @@ export function DienstplanWeekView() {
             Vorschau (Saldo vor der Woche + Plan-Summe − Vertragssoll); in der Ist-Ansicht wie
             Zeitkonto (mit Ist-Summe). <strong>o. U.</strong> = Vorschau inkl. geplantem Urlaub
             dieser Woche (Ist zählt, wenn die Zelle nicht leer ist). Feiertage &amp; Ferien unter{" "}
-            <strong>Feiertage &amp; Ferien</strong>. Untere Zeile = Notiz pro Tag (z. B. Tätigkeit).{" "}
+            <strong>Feiertage &amp; Ferien</strong>. <strong>Notiz</strong> nur bei Bedarf:{" "}
+            kleines <strong>+</strong> unten rechts in der Zelle, oder bereits gespeicherte Notiz — sonst volle Höhe
+            für die Zeit.{" "}
             <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
             <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
             Notizen (Mitarbeiter ohne Daten in der Vorwoche: leere Zeilen).{" "}

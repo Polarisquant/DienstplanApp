@@ -25,11 +25,31 @@ export type ParseShiftCellOptions = {
 };
 
 /** Kürzel für Feiertag ohne Dienst (kein Zeitstring): F, FT, Feiertag. */
-function isFtPaidHolidayAbbreviation(raw: string): boolean {
+export function isFtPaidHolidayAbbreviation(raw: string): boolean {
   const t = raw.replace(/\s+/g, " ").trim();
   if (/^F(T)?$/i.test(t)) return true;
   if (/^Feiertag$/i.test(t)) return true;
   return false;
+}
+
+/** Raster-Farben: ein Abkürzungsblock ohne `|` (U, K, F/FT/Feiertag, Z…). */
+export type ShiftAbbrevUiKind = "u" | "k" | "f" | "z";
+
+export function shiftAbbrevUiKind(raw: string): ShiftAbbrevUiKind | null {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (!s || s.includes("|")) return null;
+  const first = s.charAt(0).toUpperCase();
+  if (first === "U") {
+    if (/^U\s*$/i.test(s) || /^U\s*\(\s*[\d.,]+\s*\)\s*$/i.test(s)) return "u";
+    return null;
+  }
+  if (first === "K") {
+    if (/^K\s*$/i.test(s) || /^K\s*\(\s*[\d.,]+\s*\)\s*$/i.test(s)) return "k";
+    return null;
+  }
+  if (first === "F" && isFtPaidHolidayAbbreviation(s)) return "f";
+  if (first === "Z") return "z";
+  return null;
 }
 
 function parseTimeToHours(hms: string): number | null {
