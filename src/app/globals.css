@@ -12,8 +12,45 @@ body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
 
+/* Dienstplan: Schicht-Text skaliert mit Zellenbreite (Fenster schmaler → Spalte schmaler → kleinere Schrift) */
+@layer components {
+  .rota-day-cell-cq {
+    container-type: inline-size;
+  }
+
+  /*
+   * Schichtfeld (Zeitstrings):
+   * – Fallback: fluid (Viewport + cqi), bis ~19px
+   * – Primär: eine Tabelle einheitliche Größe --rota-shift-uniform (JS: längster Text + Inputbreite)
+   * – Horizontal symmetrisch: gleicher Abstand wie links (Mini-„+“ sitzt absolut auf der <td>, kein extra Inset rechts)
+   */
+  .rota-shift-input-fluid {
+    box-sizing: border-box;
+    padding-inline: 0.45rem;
+    font-size: var(
+      --rota-shift-uniform,
+      clamp(11px, 0.72vw + 0.56rem, 19px)
+    );
+  }
+
+  @container (min-width: 1px) {
+    .rota-shift-input-fluid {
+      font-size: var(--rota-shift-uniform, clamp(11px, 7.5cqi, 19px));
+    }
+  }
+
+  .rota-shift-abbrev-tile {
+    width: clamp(2.25rem, 22cqi, 2.75rem);
+    height: clamp(2.25rem, 22cqi, 2.75rem);
+    font-size: clamp(0.95rem, 14cqi, 1.25rem);
+  }
+}
+
 /* Abrechnung & Druck: Steuerung ausblenden */
 @media print {
+  .rota-shift-input-fluid {
+    font-size: 10pt !important;
+  }
   .no-print {
     display: none !important;
   }

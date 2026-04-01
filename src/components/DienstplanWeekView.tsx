@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -258,7 +259,8 @@ function RotaDayCell({
   const shiftMinH = noteRowVisible ? "min-h-[2.35rem]" : "min-h-[3.65rem]";
 
   const dis = readOnly ? "disabled:bg-slate-100/80 disabled:opacity-95" : "";
-  let shiftClass = `w-full min-w-[6.5rem] rounded-md border-2 px-2 py-1 text-[15px] font-semibold outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] ${shiftMinH} ${dis}`;
+
+  let shiftClass = `rota-shift-input-fluid w-full min-w-0 rounded-md border-2 py-1 font-semibold leading-tight tracking-tight outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] ${shiftMinH} ${dis}`;
 
   if (!abbrKind) {
     shiftClass += showAbbrevTile
@@ -290,16 +292,18 @@ function RotaDayCell({
   }
 
   return (
-    <td className={`relative p-0 align-stretch ${shell}`}>
+    <td className={`rota-day-cell-cq relative p-0 align-stretch ${shell}`}>
       <div className="flex h-full min-h-0 flex-col gap-1 p-1 pb-3">
-        <div className={`relative min-w-0 flex-1 ${noteRowVisible ? "" : "min-h-[3.65rem]"}`}>
+        <div
+          className={`relative flex min-w-0 flex-1 items-center justify-center ${noteRowVisible ? "" : "min-h-[4.15rem]"}`}
+        >
           {showAbbrevTile && badgeMeta ? (
             <div
               className="pointer-events-none absolute inset-0 z-0 flex items-center justify-center"
               aria-hidden
             >
               <span
-                className={`flex h-11 w-11 items-center justify-center rounded-lg text-xl font-bold leading-none text-white shadow-md ${badgeMeta.chip}`}
+                className={`rota-shift-abbrev-tile flex items-center justify-center rounded-lg font-bold leading-none text-white shadow-md ${badgeMeta.chip}`}
                 title={badgeMeta.title}
               >
                 {rotaAbbrevMarkChar(abbrKind!)}
@@ -404,6 +408,129 @@ function planCellsForRow(r: RowDTO, grid: Record<string, GridRow>): {
   };
 }
 
+/** Alle sichtbaren Zeit-Zellen (keine U/K/F/Z-Kürzel) für eine einheitliche Tabellen-Schriftgröße. */
+function collectRotaTimeStringsForUniformFont(
+  rows: RowDTO[],
+  grid: Record<string, GridRow>,
+  layer: Layer
+): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    const cells =
+      layer === "PLAN"
+        ? planCellsForRow(r, grid).plan
+        : istCellsForRow(r, grid).actual;
+    for (let di = 0; di < 7; di++) {
+      const v = (cells[di] ?? "").trim();
+      if (!v) continue;
+      if (shiftAbbrevUiKind(v)) continue;
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
+ * Prüft mit einem versteckten Input (gleiche Klassen + Breite wie Original), ob **alle**
+ * Zeitstrings bei fontSize `px` ohne horizontales Abschneiden passen — näher am Browser als Canvas.
+ */
+function rotaAllTimeStringsFitAtFontPx(
+  strings: readonly string[],
+  px: number,
+  referenceInput: HTMLInputElement,
+  probe: HTMLInputElement
+): boolean {
+  const w = referenceInput.clientWidth;
+  if (w < 24) return false;
+  probe.style.width = `${w}px`;
+  probe.style.maxWidth = `${w}px`;
+  probe.style.fontSize = `${px}px`;
+  const tol = 2;
+  for (const s of strings) {
+    probe.value = s;
+    void probe.offsetWidth;
+    if (probe.scrollWidth > probe.clientWidth + tol) return false;
+  }
+  return true;
+}
+
+/**
+ * Eine gemeinsame Schriftgröße für alle Zeit-Einträge im Raster: so groß wie möglich (bis 22px),
+ * begrenzt durch echtes Input-Layout (scrollWidth). ResizeObserver bei Fenster-/Scroll-Änderung.
+ */
+function useUniformRotaShiftFont(
+  tableWrapRef: React.RefObject<HTMLDivElement | null>,
+  timeStrings: readonly string[],
+  enabled: boolean
+) {
+  const signature = timeStrings.join("\u0001");
+
+  useLayoutEffect(() => {
+    const root = tableWrapRef.current;
+    if (!enabled) {
+      root?.style.removeProperty("--rota-shift-uniform");
+      return;
+    }
+    if (!root) return;
+
+    const probe = document.createElement("input");
+    probe.type = "text";
+    probe.readOnly = true;
+    probe.tabIndex = -1;
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText =
+      "position:fixed;left:0;top:0;opacity:0;pointer-events:none;z-index:-1;margin:0;box-sizing:border-box;";
+    document.body.appendChild(probe);
+
+    const run = () => {
+      const input = root.querySelector(
+        "input.rota-shift-input-fluid"
+      ) as HTMLInputElement | null;
+      if (!input) return;
+      if (input.clientWidth < 36) return;
+
+      if (timeStrings.length === 0) {
+        root.style.removeProperty("--rota-shift-uniform");
+        return;
+      }
+
+      probe.className = input.className;
+      void probe.offsetWidth;
+
+      const lo = 7.5;
+      const hi = 22;
+      const fit = (px: number) =>
+        rotaAllTimeStringsFitAtFontPx(timeStrings, px, input, probe);
+
+      if (fit(hi)) {
+        root.style.setProperty("--rota-shift-uniform", `${hi}px`);
+        return;
+      }
+      if (!fit(lo)) {
+        root.style.setProperty("--rota-shift-uniform", `${lo}px`);
+        return;
+      }
+      let low = lo;
+      let high = hi;
+      for (let i = 0; i < 28; i++) {
+        const mid = (low + high) / 2;
+        if (fit(mid)) low = mid;
+        else high = mid;
+      }
+      root.style.setProperty("--rota-shift-uniform", `${low}px`);
+    };
+
+    const ro = new ResizeObserver(() => requestAnimationFrame(run));
+    ro.observe(root);
+    requestAnimationFrame(run);
+    return () => {
+      ro.disconnect();
+      probe.remove();
+      root.style.removeProperty("--rota-shift-uniform");
+    };
+  }, [enabled, signature, tableWrapRef]);
+}
+
 /** o. U. nach Plan+Ist im Raster vs. zuletzt geladenem Stand (Vorschau vor Speichern). */
 function vacationOpenPreview(
   r: RowDTO,
@@ -499,6 +626,7 @@ export function DienstplanWeekView() {
   const [msg, setMsg] = useState<string | null>(null);
   const [laborOpenEmp, setLaborOpenEmp] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
+  const rotaTableWrapRef = useRef<HTMLDivElement>(null);
   const [showWeather, setShowWeather] = useState(false);
   const [weatherData, setWeatherData] = useState<WeatherApiResponse | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
@@ -1155,6 +1283,16 @@ export function DienstplanWeekView() {
     return data.rows.filter((r) => r.employee.workSite !== "SHARED");
   }, [data, hideSharedEmployees]);
 
+  const rotaUniformTimeStrings = useMemo(
+    () =>
+      data
+        ? collectRotaTimeStringsForUniformFont(displayRows, grid, layer)
+        : [],
+    [data, displayRows, grid, layer]
+  );
+
+  useUniformRotaShiftFont(rotaTableWrapRef, rotaUniformTimeStrings, Boolean(data));
+
   useEffect(() => {
     if (!laborOpenEmp) return;
     if (!displayRows.some((r) => r.employee.id === laborOpenEmp)) {
@@ -1515,7 +1653,10 @@ export function DienstplanWeekView() {
             </div>
           )}
 
-          <div className="no-print overflow-x-auto rounded-xl border-2 border-[var(--rota-border)] bg-white shadow-md">
+          <div
+            ref={rotaTableWrapRef}
+            className="no-print overflow-x-auto rounded-xl border-2 border-[var(--rota-border)] bg-white shadow-md"
+          >
             <table className="min-w-[980px] w-full border-collapse text-[15px]">
               <thead>
                 <tr className="bg-[var(--rota-header)] text-white">
