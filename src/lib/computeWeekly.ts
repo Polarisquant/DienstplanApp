@@ -8,7 +8,9 @@ import { weeklyProRataTarget } from "./employeeContract";
 export function computeWeeklyBalanceWithContracts(
   dayCells: string[],
   weekStartISO: string,
-  contractRows: ContractRow[]
+  contractRows: ContractRow[],
+  /** Gesetzliche Feiertage in dieser Woche (YYYY-MM-DD), für FT = Feiertagsentgelt-Stunden. */
+  publicHolidayDates?: ReadonlySet<string>
 ): {
   weeklyHours: number;
   deltaVsContract: number;
@@ -17,7 +19,8 @@ export function computeWeeklyBalanceWithContracts(
   const { hours, errors } = sumParsedWeekHoursWithContracts(
     dayCells,
     weekStartISO,
-    contractRows
+    contractRows,
+    publicHolidayDates
   );
   const target = weeklyProRataTarget(contractRows, weekStartISO);
   return {

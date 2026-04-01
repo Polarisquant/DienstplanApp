@@ -140,6 +140,20 @@ export async function GET(req: Request) {
     employees.map((e) => e.id)
   );
 
+  const holidayRowsPayroll = await prisma.holiday.findMany({
+    where: {
+      includedInPlan: true,
+      date: {
+        gte: new Date(`${fromISO}T00:00:00.000Z`),
+        lte: new Date(`${toISO}T23:59:59.999Z`),
+      },
+    },
+    select: { date: true },
+  });
+  const holidayDateSetPayroll = new Set(
+    holidayRowsPayroll.map((h) => h.date.toISOString().slice(0, 10))
+  );
+
   const rows = await Promise.all(
     employees.map(async (e) => {
       let istHours = 0;
@@ -179,7 +193,10 @@ export async function GET(req: Request) {
           const r = parseShiftCell(
             actualRaw,
             cDay.contractHoursPerWeek,
-            cDay.workDaysPerWeek
+            cDay.workDaysPerWeek,
+            {
+              treatFtAsPaidHoliday: holidayDateSetPayroll.has(day),
+            }
           );
           if (!r.ok) {
             if (actualRaw.trim()) parseErrors.push(`${day}: ${r.error}`);

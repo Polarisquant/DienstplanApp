@@ -186,12 +186,14 @@ export async function GET(req: Request) {
     const wsPlan = computeWeeklyBalanceWithContracts(
       plan,
       weekStartStr,
-      contractRows
+      contractRows,
+      holidayKeys
     );
     const wsAct = computeWeeklyBalanceWithContracts(
       actual,
       weekStartStr,
-      contractRows
+      contractRows,
+      holidayKeys
     );
     const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
     const zagPreview = base + wsAct.deltaVsContract;

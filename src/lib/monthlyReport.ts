@@ -376,7 +376,8 @@ export async function buildMonthlyReport(
         dayHours += parseShiftCellTotalHours(
           rawForVac,
           cDay.contractHoursPerWeek,
-          cDay.workDaysPerWeek
+          cDay.workDaysPerWeek,
+          holidayDateSet.has(dayISO) ? { treatFtAsPaidHoliday: true } : undefined
         );
         break;
       }
@@ -384,7 +385,12 @@ export async function buildMonthlyReport(
     if (dayVacationUnits === 0) {
       for (const wid of wids) {
         const raw = rawLookup.get(`${wid}|${di}`)?.raw ?? "";
-        dayHours += parseShiftCellTotalHoursForDate(raw, contractRows, dayISO);
+        dayHours += parseShiftCellTotalHoursForDate(
+          raw,
+          contractRows,
+          dayISO,
+          holidayDateSet
+        );
       }
     }
 

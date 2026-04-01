@@ -292,6 +292,14 @@ export function DienstplanWeekView() {
   const [weatherErr, setWeatherErr] = useState<string | null>(null);
   const [hideSharedEmployees, setHideSharedEmployees] = useState(false);
 
+  /** Kalendertage mit gesetzlichem Feiertag (aus API) — für FT = Soll-Tag / Feiertagsentgelt. */
+  const publicHolidayDates = useMemo(() => {
+    if (!data) return new Set<string>();
+    return new Set(
+      data.days.filter((d) => d.holidays.length > 0).map((d) => d.dateISO)
+    );
+  }, [data]);
+
   useEffect(() => {
     try {
       const s = localStorage.getItem(SITE_STORAGE_KEY);
@@ -791,7 +799,8 @@ export function DienstplanWeekView() {
         const livePlan = computeWeeklyBalanceWithContracts(
           plan,
           data.weekStart,
-          cr
+          cr,
+          publicHolidayDates
         );
         const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -809,7 +818,8 @@ export function DienstplanWeekView() {
         const liveActual = computeWeeklyBalanceWithContracts(
           actual,
           data.weekStart,
-          cr
+          cr,
+          publicHolidayDates
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -861,7 +871,8 @@ export function DienstplanWeekView() {
         const livePlan = computeWeeklyBalanceWithContracts(
           plan,
           data.weekStart,
-          cr
+          cr,
+          publicHolidayDates
         );
         const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -883,7 +894,8 @@ export function DienstplanWeekView() {
         const liveActual = computeWeeklyBalanceWithContracts(
           actual,
           data.weekStart,
-          cr
+          cr,
+          publicHolidayDates
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -1380,12 +1392,14 @@ export function DienstplanWeekView() {
                   const livePlanCalc = computeWeeklyBalanceWithContracts(
                     planCells,
                     data.weekStart,
-                    cr
+                    cr,
+                    publicHolidayDates
                   );
                   const liveActualCalc = computeWeeklyBalanceWithContracts(
                     actualCells,
                     data.weekStart,
-                    cr
+                    cr,
+                    publicHolidayDates
                   );
                   const weeklyHoursShown =
                     layer === "PLAN"
@@ -1564,7 +1578,8 @@ export function DienstplanWeekView() {
                     const livePlan = computeWeeklyBalanceWithContracts(
                       plan,
                       data.weekStart,
-                      crP
+                      crP,
+                      publicHolidayDates
                     );
                     const zagP = r.balanceBeforeWeek + livePlan.deltaVsContract;
                     const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
@@ -1607,7 +1622,8 @@ export function DienstplanWeekView() {
                   const liveActual = computeWeeklyBalanceWithContracts(
                     actual,
                     data.weekStart,
-                    crI
+                    crI,
+                    publicHolidayDates
                   );
                   const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
                   const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
@@ -1685,7 +1701,7 @@ export function DienstplanWeekView() {
           )}
 
           <div className="no-print">
-            {errsBlockLive(data, grid, layer, displayRows)}
+            {errsBlockLive(data, grid, layer, displayRows, publicHolidayDates)}
           </div>
 
           <div className="no-print mt-4 flex flex-wrap gap-2">
@@ -1721,7 +1737,9 @@ export function DienstplanWeekView() {
             Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
             <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
             <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
-            Stunden); <code>ZA</code>, <code>FT</code>.             <strong>WS</strong> =
+            Stunden); <code>ZA</code>; <code>FT</code> an einem im Kalender markierten{" "}
+            <strong>gesetzlichen Feiertag</strong> = Soll-Tag wie U (Feiertagsentgelt), sonst 0 h.{" "}
+            <strong>WS</strong> =
             Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> in der Plan-Ansicht =
             Vorschau (Saldo vor der Woche + Plan-Summe − Vertragssoll); in der Ist-Ansicht wie
             Zeitkonto (mit Ist-Summe). <strong>o. U.</strong> = Vorschau inkl. geplantem Urlaub
@@ -1744,7 +1762,8 @@ function errsBlockLive(
   data: WeekPayload,
   grid: Record<string, GridRow>,
   layer: Layer,
-  rows: WeekPayload["rows"]
+  rows: WeekPayload["rows"],
+  publicHolidayDates: ReadonlySet<string>
 ) {
   const lines = rows.flatMap((r) => {
     const g = grid[r.employee.id];
@@ -1755,7 +1774,8 @@ function errsBlockLive(
     const { errors } = computeWeeklyBalanceWithContracts(
       cells,
       data.weekStart,
-      contractRowsForRow(r)
+      contractRowsForRow(r),
+      publicHolidayDates
     );
     return errors.map((x) => `${r.employee.name}: ${x}`);
   });

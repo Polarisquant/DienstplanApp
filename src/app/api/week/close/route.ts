@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { addDaysISO } from "@/lib/dateNav";
+import { buildHolidayMap } from "@/lib/holidays";
+import { holidayDateKeysFromMap } from "@/lib/schoolBreaks";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
 import { computeWeeklyBalanceWithContracts } from "@/lib/computeWeekly";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
@@ -50,6 +53,19 @@ export async function POST(req: Request) {
     );
 
     const weekStartISO = formatWeekStart(weekStart);
+    const lastDayStr = addDaysISO(weekStartISO, 6);
+    const holidayRowsClose = await prisma.holiday.findMany({
+      where: {
+        includedInPlan: true,
+        date: {
+          gte: new Date(`${weekStartISO}T00:00:00.000Z`),
+          lte: new Date(`${lastDayStr}T23:59:59.999Z`),
+        },
+      },
+    });
+    const holidayMapClose = buildHolidayMap(holidayRowsClose);
+    const holidayKeysClose = holidayDateKeysFromMap(weekStartISO, holidayMapClose);
+
     const contractMapClose = await contractRowsMapForEmployees(
       employees.map((e) => e.id)
     );
@@ -69,7 +85,8 @@ export async function POST(req: Request) {
         const { deltaVsContract } = computeWeeklyBalanceWithContracts(
           arr,
           weekStartISO,
-          rows
+          rows,
+          holidayKeysClose
         );
 
         const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;

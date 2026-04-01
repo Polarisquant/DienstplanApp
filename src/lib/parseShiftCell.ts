@@ -2,7 +2,8 @@
  * Parst eine Tageszelle wie im Excel-Tool (README / _stunden_formel_pro_tag).
  * U, K → voller Soll-Tag (**Vertragsstunden / Arbeitstage**), optional **U(2)** / **K(4)** =
  * genau die angegebenen Stunden (Komma erlaubt).
- * ZA, FT (erkennung über erstes Zeichen Z bzw. F) → 0 Arbeitsstunden
+ * ZA → 0 Arbeitsstunden. **FT** / **F** / „Feiertag“ → 0, außer `treatFtAsPaidHoliday`:
+ * an eingetragenem **gesetzlichen Feiertag** wie voller Soll-Tag (Feiertagsentgelt / gleiche Logik wie U-Tag).
  * Zeit: "11:30-20:00" oder "11:30-20:00-30" (Pause Minuten)
  *
  * **Netto-Arbeitszeit bei Zeit-Eingaben:** Zeitraum **Start − Ende** (ggf. +24 h bei Mitternacht) **minus**
@@ -16,6 +17,20 @@ import { contractForDate } from "@/lib/employeeContract";
 export type ParseResult =
   | { ok: true; hours: number; kind: "time" | "uk" | "zaft" | "empty" }
   | { ok: false; error: string };
+
+/** Optionen nur für Aufrufer mit Kalender-Kontext (Feiertag aus Stammdaten). */
+export type ParseShiftCellOptions = {
+  /** true: FT/F/Feiertag zählen wie ganzer Soll-Tag (Vertragsstunden/Arbeitstage). */
+  treatFtAsPaidHoliday?: boolean;
+};
+
+/** Kürzel für Feiertag ohne Dienst (kein Zeitstring): F, FT, Feiertag. */
+function isFtPaidHolidayAbbreviation(raw: string): boolean {
+  const t = raw.replace(/\s+/g, " ").trim();
+  if (/^F(T)?$/i.test(t)) return true;
+  if (/^Feiertag$/i.test(t)) return true;
+  return false;
+}
 
 function parseTimeToHours(hms: string): number | null {
   const t = hms.trim();
@@ -35,7 +50,8 @@ function parseTimeToHours(hms: string): number | null {
 export function parseShiftCell(
   raw: string,
   contractHours: number,
-  workDays: number
+  workDays: number,
+  options?: ParseShiftCellOptions
 ): ParseResult {
   const s = raw.replace(/\s+/g, " ").trim();
   if (!s) return { ok: true, hours: 0, kind: "empty" };
@@ -72,8 +88,24 @@ export function parseShiftCell(
     };
   }
 
-  // Excel: erstes Zeichen Z oder F → 0 Arbeitsstunden (ZA, FT, ggf. nur "Z"/"F")
-  if (first === "Z" || first === "F") {
+  // ZA / Abwesenheit: Z → 0
+  if (first === "Z") {
+    return { ok: true, hours: 0, kind: "zaft" };
+  }
+
+  // FT / F / Feiertag: an gesetzlichem Feiertag wie Soll-Tag, sonst 0
+  if (first === "F") {
+    if (
+      options?.treatFtAsPaidHoliday &&
+      isFtPaidHolidayAbbreviation(s) &&
+      workDays > 0
+    ) {
+      return {
+        ok: true,
+        hours: contractHours / workDays,
+        kind: "uk",
+      };
+    }
     return { ok: true, hours: 0, kind: "zaft" };
   }
 
@@ -118,12 +150,13 @@ export function parseShiftCell(
 export function parseShiftCellTotalHours(
   raw: string,
   contractHours: number,
-  workDays: number
+  workDays: number,
+  options?: ParseShiftCellOptions
 ): number {
   const s = raw.replace(/\s+/g, " ").trim();
   if (!s) return 0;
   if (!s.includes("|")) {
-    const r = parseShiftCell(s, contractHours, workDays);
+    const r = parseShiftCell(s, contractHours, workDays, options);
     return r.ok ? r.hours : 0;
   }
   const segs = s
@@ -132,7 +165,7 @@ export function parseShiftCellTotalHours(
     .filter(Boolean);
   let total = 0;
   for (const seg of segs) {
-    const r = parseShiftCell(seg, contractHours, workDays);
+    const r = parseShiftCell(seg, contractHours, workDays, options);
     if (r.ok) total += r.hours;
   }
   return total;
@@ -178,18 +211,20 @@ export function sumParsedWeekHours(
 export function sumParsedWeekHoursWithContracts(
   cells: string[],
   weekStartISO: string,
-  contractRows: ContractRow[]
+  contractRows: ContractRow[],
+  /** Kalendertage (YYYY-MM-DD) mit mindestens einem gesetzlichen Feiertag (nicht Schulferien). */
+  publicHolidayDates?: ReadonlySet<string>
 ): { hours: number; errors: string[] } {
   const errors: string[] = [];
   let total = 0;
   for (let i = 0; i < 7; i++) {
     const dateISO = addDaysISO(weekStartISO, i);
     const c = contractForDate(contractRows, dateISO);
-    const r = parseShiftCell(
-      cells[i] ?? "",
-      c.contractHoursPerWeek,
-      c.workDaysPerWeek
-    );
+    const treatFt =
+      publicHolidayDates != null && publicHolidayDates.has(dateISO);
+    const r = parseShiftCell(cells[i] ?? "", c.contractHoursPerWeek, c.workDaysPerWeek, {
+      treatFtAsPaidHoliday: treatFt,
+    });
     if (!r.ok) errors.push(`Tag ${i + 1}: ${r.error}`);
     else total += r.hours;
   }
@@ -199,12 +234,16 @@ export function sumParsedWeekHoursWithContracts(
 export function parseShiftCellTotalHoursForDate(
   raw: string,
   contractRows: ContractRow[],
-  dateISO: string
+  dateISO: string,
+  publicHolidayDates?: ReadonlySet<string>
 ): number {
   const c = contractForDate(contractRows, dateISO);
+  const opts: ParseShiftCellOptions | undefined =
+    publicHolidayDates?.has(dateISO) ? { treatFtAsPaidHoliday: true } : undefined;
   return parseShiftCellTotalHours(
     raw,
     c.contractHoursPerWeek,
-    c.workDaysPerWeek
+    c.workDaysPerWeek,
+    opts
   );
 }
