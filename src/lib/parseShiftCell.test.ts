@@ -62,3 +62,26 @@ test("U(2,5) Komma als Dezimaltrenner", () => {
   if (!r.ok) return;
   assert.equal(r.hours, 2.5);
 });
+
+test("FT ohne Feiertag = 0 h", () => {
+  const r = parseShiftCell("FT", C, W);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.hours, 0);
+  assert.equal(r.kind, "zaft");
+});
+
+test("FT an gesetzlichem Feiertag = Soll-Tag (40/5)", () => {
+  const r = parseShiftCell("FT", C, W, { treatFtAsPaidHoliday: true });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.hours, 8);
+  assert.equal(r.kind, "uk");
+});
+
+test("ZA an Feiertag bleibt 0", () => {
+  const r = parseShiftCell("ZA", C, W, { treatFtAsPaidHoliday: true });
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.hours, 0);
+});
