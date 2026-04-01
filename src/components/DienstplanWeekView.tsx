@@ -431,31 +431,10 @@ function collectRotaTimeStringsForUniformFont(
 }
 
 /**
- * Engste Schicht-Zelle (Border-Box): einheitliche Schrift muss dort passen, nicht nur im ersten Feld.
- */
-function rotaNarrowestShiftInput(root: HTMLElement): HTMLInputElement | null {
-  const list = root.querySelectorAll("input.rota-shift-input-fluid");
-  let best: HTMLInputElement | null = null;
-  let bestOw = Infinity;
-  for (let i = 0; i < list.length; i++) {
-    const el = list.item(i);
-    if (!(el instanceof HTMLInputElement)) continue;
-    const ow = el.offsetWidth;
-    if (ow < 8) continue;
-    if (ow < bestOw) {
-      bestOw = ow;
-      best = el;
-    }
-  }
-  return best;
-}
-
-/**
- * Prüft mit verstecktem Input (gleiche Klassen), ob **alle** Zeitstrings bei `px` passen.
- * – Breite = **offsetWidth** der Referenz (border-box), damit `probe.clientWidth` wie beim Original ist
- *   (nur `clientWidth` als CSS-Breite würde die Box um die Rahmen zu schmal setzen).
- * – **Kein** „+tol“ nach oben: früher `scrollWidth <= clientWidth + 2` erlaubte leichten Überlauf → letzte Ziffer
- *   stellenweise abgeschnitten. Stattdessen kleiner **Puffer** nach innen für Subpixel (Safari/Chromium).
+ * Prüft mit verstecktem Input (gleiche Klassen + Breite wie Referenzfeld), ob **alle** Zeitstrings bei `px` passen.
+ * Wie zuvor: Referenz = **erstes** Schichtfeld, `width` = dessen `clientWidth`.
+ * Gegen Abschneiden der letzten Ziffer: früher galt `scrollWidth > clientWidth + 2` → bis **2px Überlauf** wurde noch
+ * als „passt“ gewertet. Jetzt strikt `scrollWidth ≤ clientWidth` (kein Zuschlag nach oben).
  */
 function rotaAllTimeStringsFitAtFontPx(
   strings: readonly string[],
@@ -463,17 +442,15 @@ function rotaAllTimeStringsFitAtFontPx(
   referenceInput: HTMLInputElement,
   probe: HTMLInputElement
 ): boolean {
-  const borderBoxW = referenceInput.offsetWidth;
-  if (borderBoxW < 28) return false;
-  probe.style.width = `${borderBoxW}px`;
-  probe.style.maxWidth = `${borderBoxW}px`;
+  const w = referenceInput.clientWidth;
+  if (w < 24) return false;
+  probe.style.width = `${w}px`;
+  probe.style.maxWidth = `${w}px`;
   probe.style.fontSize = `${px}px`;
   for (const s of strings) {
     probe.value = s;
     void probe.offsetWidth;
-    const cw = probe.clientWidth;
-    const budget = Math.max(4, cw - 1);
-    if (probe.scrollWidth > budget) return false;
+    if (probe.scrollWidth > probe.clientWidth) return false;
   }
   return true;
 }
@@ -507,7 +484,9 @@ function useUniformRotaShiftFont(
     document.body.appendChild(probe);
 
     const run = () => {
-      const input = rotaNarrowestShiftInput(root);
+      const input = root.querySelector(
+        "input.rota-shift-input-fluid"
+      ) as HTMLInputElement | null;
       if (!input) return;
       if (input.clientWidth < 36) return;
 
