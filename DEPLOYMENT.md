@@ -88,6 +88,8 @@ export PLANNER_PASSWORD="ein-sicheres-passwort"
    | `DATABASE_URL` | Neon-Connection-String |
    | `SESSION_SECRET` | mind. 16 Zeichen, zufällig |
    | `PLANNER_PASSWORD` | Login-Passwort |
+   | `CRON_SECRET` | zufälliges Geheimnis (z. B. `openssl rand -hex 32`) — für automatische Urlaubsaufstockung |
+   | `VACATION_LEDGER_CUTOVER_DATE` | optional: `YYYY-MM-DD` (Go-Live / Systemwechsel), siehe unten |
 
 4. **Build Command:** `npm run build`  
    **Install:** Standard (`npm install` – `postinstall` führt `prisma generate` aus).
@@ -105,11 +107,25 @@ export PLANNER_PASSWORD="ein-sicheres-passwort"
    - `npx prisma db seed` (Planer-User + Feiertage + ggf. Demo-Daten)
 3. **GitHub:** Repo wie in Abschnitt **0** pushen.
 4. **Vercel:** Mit GitHub anmelden → **Add New… → Project** → Repo wählen.
-5. **Vercel → Environment Variables** (Production): `DATABASE_URL`, `SESSION_SECRET`, `PLANNER_PASSWORD` **genau wie lokal** (Session-Secret kann derselbe Zufallswert sein).
+5. **Vercel → Environment Variables** (Production): `DATABASE_URL`, `SESSION_SECRET`, `PLANNER_PASSWORD` **genau wie lokal** (Session-Secret kann derselbe Zufallswert sein). Für **automatischen Urlaub** zusätzlich `CRON_SECRET` und bei Systemwechsel `VACATION_LEDGER_CUTOVER_DATE` setzen (siehe nächster Abschnitt).
 6. **Vercel Build:** Standard reicht (`npm run build`); bei Monorepo **Root Directory** = `web`.
 7. **Deploy** abwarten → **Production URL** öffnen → Login **planer@local** + dein `PLANNER_PASSWORD`.
 
 **Hinweis:** Jeder neue Deploy führt **kein** `db seed` automatisch aus. Seed nur bei Bedarf erneut lokal gegen Neon ausführen.
+
+#### Urlaub: Stichtag (`VACATION_LEDGER_CUTOVER_DATE`) & Cron
+
+1. **`VACATION_LEDGER_CUTOVER_DATE=YYYY-MM-DD`** (empfohlen ab Go-Live / Wechsel vom alten HR-Tool):  
+   - **Bestandsmitarbeiter** (Eintritt **vor** diesem Datum): Eröffnungsbuch im Journal am **Stichtag** — vorher den **offenen Urlaub** laut Altstand eintragen.  
+   - **Neueintritte** (Eintritt **≥** Stichtag): Eröffnung am **Eintrittsdatum**.  
+   - Ohne Variable: wie bisher (Eintritt oder Zeitpunkt der ersten Buchung).
+
+2. **`CRON_SECRET`**: in Vercel **Production** setzen. Die Route `/api/cron/vacation-accrual` akzeptiert nur Aufrufe mit `Authorization: Bearer <CRON_SECRET>` oder Query `?secret=`.
+
+3. **`vercel.json`** im Ordner `web` definiert einen **monatlichen** Cron am **1.** jeden Monats (**05:05 UTC**) auf diese Route — bucht den **Vormonat** (Urlaub ÷ 12). Vercel sendet beim Cron-Aufruf den **Bearer** automatisch, wenn `CRON_SECRET` im Projekt gesetzt ist (siehe [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs)).  
+   **Hinweis:** Geplante Crons setzen ggf. einen **bezahlten** Vercel-Plan voraus — sonst Cron extern triggern (z. B. am 1. mit `curl`). Manueller Test am falschen Kalendertag: die Route **bucht nichts** (nur am 1. UTC).
+
+4. **Monatsgutschrift:** **5 Urlaubswochen × Arbeitstage/Woche** (z. B. 2 Tage/Wo. → 10 T/Jahr ÷ 12); **Stunden** ändern die **Anzahl** der Urlaubstage im System nicht. **`annualVacationDays`** wird beim Speichern mitangeglichen, wenn **Stunden oder Arbeitstage** geändert werden und kein eigener Jahresurlaub mitgeschickt wird. Eintrittsdatum nur für **Eröffnungsstichtag** im Journal.
 
 ### Performance (Vercel + Postgres) — weniger „klobig“
 

@@ -7,6 +7,10 @@ import {
   syncEmployeeContractCache,
 } from "@/lib/employeeContractLoad";
 import { firstContractEffectiveFromNoonUTC } from "@/lib/firstContractDate";
+import { VacationLedgerKind } from "@prisma/client";
+import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
+import { ensureVacationOpeningMigration } from "@/lib/vacationLedger";
+import { annualVacationDaysProportional } from "@/lib/vacationAccrualAT";
 import { z } from "zod";
 
 const contractChangeSchema = z.object({
@@ -28,6 +32,7 @@ const patchSchema = z.object({
   workDaysPerWeek: z.number().int().min(1).max(7).optional(),
   startBalanceHours: z.number().min(-10000).max(10000).optional(),
   vacationDaysOpen: z.number().min(-1000).max(1000).optional(),
+  annualVacationDays: z.number().min(0).max(60).optional(),
   active: z.boolean().optional(),
   /** Neuer Vertrag ab Monatserster (zusätzliche Zeile in der Historie) */
   contractChange: contractChangeSchema.optional(),
@@ -76,6 +81,31 @@ export async function PATCH(req: Request, context: Params) {
     const body = patchSchema.parse(await req.json());
 
     await prisma.$transaction(async (tx) => {
+      const prevRow = await tx.employee.findUnique({
+        where: { id },
+        select: {
+          vacationDaysOpen: true,
+          entryDate: true,
+          contractHoursPerWeek: true,
+          workDaysPerWeek: true,
+        },
+      });
+      if (!prevRow) {
+        throw new Error("NOT_FOUND");
+      }
+
+      await ensureVacationOpeningMigration(tx, id, prevRow.vacationDaysOpen, {
+        openingEffectiveDate: openingEffectiveDateForEmployee(prevRow.entryDate),
+      });
+
+      const nextHours =
+        body.contractHoursPerWeek ?? prevRow.contractHoursPerWeek;
+      const nextWorkDays = body.workDaysPerWeek ?? prevRow.workDaysPerWeek;
+      const syncAnnualFromContract =
+        body.annualVacationDays === undefined &&
+        (body.contractHoursPerWeek !== undefined ||
+          body.workDaysPerWeek !== undefined);
+
       await tx.employee.update({
         where: { id },
         data: {
@@ -106,9 +136,34 @@ export async function PATCH(req: Request, context: Params) {
           ...(body.vacationDaysOpen !== undefined && {
             vacationDaysOpen: body.vacationDaysOpen,
           }),
+          ...(body.annualVacationDays !== undefined && {
+            annualVacationDays: body.annualVacationDays,
+          }),
+          ...(syncAnnualFromContract && {
+            annualVacationDays: annualVacationDaysProportional(
+              nextWorkDays,
+              nextHours
+            ),
+          }),
           ...(body.active !== undefined && { active: body.active }),
         },
       });
+
+      if (body.vacationDaysOpen !== undefined) {
+        const diff = body.vacationDaysOpen - prevRow.vacationDaysOpen;
+        if (diff !== 0) {
+          const iso = new Date().toISOString().slice(0, 10);
+          await tx.vacationLedger.create({
+            data: {
+              employeeId: id,
+              amount: diff,
+              kind: VacationLedgerKind.MANUAL_ADJUSTMENT,
+              effectiveDate: new Date(`${iso}T12:00:00.000Z`),
+              note: "Stammdaten · offener Urlaub",
+            },
+          });
+        }
+      }
 
       let contractRowsDb = await tx.employeeContract.findMany({
         where: { employeeId: id },
@@ -199,6 +254,9 @@ export async function PATCH(req: Request, context: Params) {
     });
     return NextResponse.json(emp);
   } catch (e) {
+    if (e instanceof Error && e.message === "NOT_FOUND") {
+      return NextResponse.json({ error: "Mitarbeiter nicht gefunden." }, { status: 404 });
+    }
     if (e instanceof z.ZodError) {
       const msg =
         e.errors.map((x) => x.message).filter(Boolean).join(" ") || "Ungültige Daten.";

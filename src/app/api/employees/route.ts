@@ -5,6 +5,9 @@ import {
   normalizePlaceholderContractsAll,
   syncEmployeeContractCachesIfStale,
 } from "@/lib/employeeContractLoad";
+import { annualVacationDaysProportional } from "@/lib/vacationAccrualAT";
+import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
+import { ensureVacationOpeningMigration } from "@/lib/vacationLedger";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -18,6 +21,8 @@ const createSchema = z.object({
   startBalanceHours: z.number().min(-10000).max(10000).optional().default(0),
   /** Auch negative Werte (z. B. Defizit); bis 2 Nachkommastellen sinnvoll im UI */
   vacationDaysOpen: z.number().min(-1000).max(1000).optional().default(0),
+  /** Jahresurlaub in Arbeitstagen (KV); Standard aus Arbeitstagen/Woche */
+  annualVacationDays: z.number().min(0).max(60).optional(),
 });
 
 export async function GET(req: Request) {
@@ -45,6 +50,12 @@ export async function POST(req: Request) {
     const from = body.entryDate
       ? new Date(`${body.entryDate}T12:00:00.000Z`)
       : new Date("2000-01-01T12:00:00.000Z");
+    const annual =
+      body.annualVacationDays ??
+      annualVacationDaysProportional(
+        body.workDaysPerWeek,
+        body.contractHoursPerWeek
+      );
     const emp = await prisma.$transaction(async (tx) => {
       const e = await tx.employee.create({
         data: {
@@ -57,8 +68,19 @@ export async function POST(req: Request) {
           workDaysPerWeek: body.workDaysPerWeek,
           startBalanceHours: body.startBalanceHours ?? 0,
           vacationDaysOpen: body.vacationDaysOpen ?? 0,
+          annualVacationDays: annual,
         },
       });
+      await ensureVacationOpeningMigration(
+        tx,
+        e.id,
+        body.vacationDaysOpen ?? 0,
+        {
+          openingEffectiveDate: openingEffectiveDateForEmployee(
+            body.entryDate ? new Date(`${body.entryDate}T12:00:00.000Z`) : null
+          ),
+        }
+      );
       await tx.employeeContract.create({
         data: {
           employeeId: e.id,

@@ -23,6 +23,8 @@ type Employee = {
   workDaysPerWeek: number;
   startBalanceHours: number;
   vacationDaysOpen: number;
+  /** Jahresurlaub Arbeitstage (Basis gesetzliche Aufbuchung) */
+  annualVacationDays: number;
   active: boolean;
   contracts?: ContractSlice[];
 };
@@ -38,6 +40,7 @@ type EmployeeFormState = {
   workDaysPerWeek: number;
   startBalanceHours: string;
   vacationDaysOpen: string;
+  annualVacationDays: number;
   /** Nur Bearbeiten: zusätzlicher Vertrag ab (1. eines Monats) */
   contractChangeFrom: string;
   contractChangeHours: number;
@@ -80,6 +83,7 @@ const emptyForm: EmployeeFormState = {
   workDaysPerWeek: 5,
   startBalanceHours: "0",
   vacationDaysOpen: "0",
+  annualVacationDays: 25,
   contractChangeFrom: "",
   contractChangeHours: 30,
   contractChangeDays: 5,
@@ -140,11 +144,16 @@ export function MitarbeiterVerwaltung() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...form,
-        startBalanceHours,
-        vacationDaysOpen,
+        name: form.name,
+        personalNumber: form.personalNumber,
         entryDate: form.entryDate.trim() || null,
         exitDate: form.exitDate.trim() || null,
+        workSite: form.workSite,
+        contractHoursPerWeek: form.contractHoursPerWeek,
+        workDaysPerWeek: form.workDaysPerWeek,
+        startBalanceHours,
+        vacationDaysOpen,
+        annualVacationDays: form.annualVacationDays,
       }),
     });
     const j = await res.json().catch(() => ({}));
@@ -192,6 +201,12 @@ export function MitarbeiterVerwaltung() {
       workDaysPerWeek: cur?.workDaysPerWeek ?? emp.workDaysPerWeek,
       startBalanceHours: numToInputString(emp.startBalanceHours),
       vacationDaysOpen: numToInputString(emp.vacationDaysOpen),
+      annualVacationDays:
+        typeof emp.annualVacationDays === "number"
+          ? emp.annualVacationDays
+          : emp.workDaysPerWeek >= 6
+            ? 30
+            : 25,
       contractChangeFrom: "",
       contractChangeHours: 30,
       contractChangeDays: 5,
@@ -227,6 +242,7 @@ export function MitarbeiterVerwaltung() {
       workDaysPerWeek: editForm.workDaysPerWeek,
       startBalanceHours,
       vacationDaysOpen,
+      annualVacationDays: editForm.annualVacationDays,
       entryDate: editForm.entryDate.trim() || null,
       exitDate: editForm.exitDate.trim() || null,
     };
@@ -489,6 +505,20 @@ export function MitarbeiterVerwaltung() {
               className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
             />
           </Field>
+          <Field label="Jahresurlaub (Tage, KV)">
+            <input
+              type="number"
+              min={0}
+              max={60}
+              step={0.5}
+              value={form.annualVacationDays}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, annualVacationDays: Number(e.target.value) }))
+              }
+              title="Basis für gesetzliche Aufbuchung (vereinfachtes AT-Modell)"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
+            />
+          </Field>
           <div className="md:col-span-2">
             <button
               type="submit"
@@ -514,6 +544,9 @@ export function MitarbeiterVerwaltung() {
                 <th className="border border-slate-200 px-2 py-2">Tage</th>
                 <th className="border border-slate-200 px-2 py-2">Start ZAG</th>
                 <th className="border border-slate-200 px-2 py-2">o. U.</th>
+                <th className="border border-slate-200 px-2 py-2" title="Jahresurlaub Arbeitstage">
+                  JUrl
+                </th>
                 <th className="border border-slate-200 px-2 py-2">Aktiv</th>
                 <th className="border border-slate-200 px-2 py-2">Aktion</th>
               </tr>
@@ -536,6 +569,15 @@ export function MitarbeiterVerwaltung() {
                     </td>
                     <td className="border border-slate-200 px-2 py-1 tabular-nums">
                       {fmtDec2.format(emp.vacationDaysOpen)}
+                    </td>
+                    <td className="border border-slate-200 px-2 py-1 tabular-nums">
+                      {fmtDec2.format(
+                        typeof emp.annualVacationDays === "number"
+                          ? emp.annualVacationDays
+                          : emp.workDaysPerWeek >= 6
+                            ? 30
+                            : 25
+                      )}
                     </td>
                     <td className="border border-slate-200 px-2 py-1">
                       {emp.active ? "Ja" : "Nein"}
@@ -807,6 +849,23 @@ export function MitarbeiterVerwaltung() {
                               }
                               placeholder="z. B. -0,25"
                               className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
+                            />
+                          </Field>
+                          <Field label="Jahresurlaub (Tage, KV)">
+                            <input
+                              type="number"
+                              min={0}
+                              max={60}
+                              step={0.5}
+                              value={editForm.annualVacationDays}
+                              onChange={(e) =>
+                                setEditForm((f) => ({
+                                  ...f,
+                                  annualVacationDays: Number(e.target.value),
+                                }))
+                              }
+                              title="Basis für gesetzliche Aufbuchung"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
                             />
                           </Field>
                           <div className="flex items-end gap-2 md:col-span-2 lg:col-span-3">

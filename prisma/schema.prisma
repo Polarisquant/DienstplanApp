@@ -24,6 +24,19 @@ enum EmployeeSite {
   SHARED
 }
 
+enum VacationLedgerKind {
+  /// Bestehender Saldo beim ersten Ledger-Lauf / neuer Mitarbeiter
+  OPENING_MIGRATION
+  /// Gesetzliche Aufstockung (AT §2 vereinfacht) seit Cutover-Datum — Legacy, nicht mehr gebucht
+  STATUTORY_ACCRUAL
+  /// Monatsgutschrift: Jahresurlaub ÷ 12 (Jahresurlaub aus Arbeitstagen/Woche)
+  MONTHLY_CONTRACT_ACCRUAL
+  /// Anpassung beim Speichern des Dienstplans (Plan/Ist „U“)
+  CONSUMPTION_ROTA
+  /// Manuell im Stammdaten-Formular geändert
+  MANUAL_ADJUSTMENT
+}
+
 model Employee {
   id                     String       @id @default(cuid())
   name                   String
@@ -39,6 +52,8 @@ model Employee {
   workDaysPerWeek        Int
   startBalanceHours      Float        @default(0)
   vacationDaysOpen       Float        @default(0)
+  /// Jahresurlaub in Arbeitstagen (Anzeige; Monatsgutschrift: 5 Wo. × workDaysPerWeek, Stunden egal).
+  annualVacationDays     Float        @default(25)
   /// Zeilenreihenfolge im Dienstplan (Crush) — niedriger = weiter oben
   planSortOrderCrush     Int          @default(0)
   /// Zeilenreihenfolge im Dienstplan (CappuCone)
@@ -51,6 +66,25 @@ model Employee {
   shiftCells        ShiftCell[]
   timeAccountLines  TimeAccountLine[]
   contracts         EmployeeContract[]
+  vacationLedgers   VacationLedger[]
+}
+
+/// Nachvollziehbare Urlaubs-Buchungen (Saldo = Summe amount; siehe references.md)
+model VacationLedger {
+  id            String               @id @default(cuid())
+  employeeId    String
+  employee      Employee             @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt     DateTime             @default(now())
+  effectiveDate DateTime             @db.Date
+  amount        Float
+  kind          VacationLedgerKind
+  note          String               @default("")
+  /// Kalendermonat der Gutschrift, z. B. "2026-02" (nur MONTHLY_CONTRACT_ACCRUAL)
+  accrualPeriod String?
+
+  @@index([employeeId])
+  @@index([employeeId, kind])
+  @@index([employeeId, accrualPeriod])
 }
 
 /// Vertragsstände (Wechsel z. B. zum 1. eines Monats). Mehrere Zeilen pro Mitarbeiter, sortiert nach effectiveFrom.

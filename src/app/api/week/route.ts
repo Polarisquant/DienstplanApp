@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ShiftLayer, WeekStatus, WorkSite } from "@prisma/client";
+import { ShiftLayer, VacationLedgerKind, WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { addDaysISO } from "@/lib/dateNav";
 import { buildHolidayMap } from "@/lib/holidays";
@@ -24,6 +24,11 @@ import {
 } from "@/lib/employeeContractLoad";
 import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
+import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
+import {
+  appendVacationLedger,
+  ensureVacationOpeningMigration,
+} from "@/lib/vacationLedger";
 import {
   employeeWhereForWorkSite,
   parseWorkSiteParam,
@@ -384,7 +389,17 @@ export async function PUT(req: Request) {
           if (arr) arr[c.dayIndex] = c.rawValue;
         }
 
-        const vacationUpdates: Promise<unknown>[] = [];
+        for (const e of employees) {
+          const bal = await tx.employee.findUnique({
+            where: { id: e.id },
+            select: { vacationDaysOpen: true },
+          });
+          if (bal) {
+            await ensureVacationOpeningMigration(tx, e.id, bal.vacationDaysOpen, {
+              openingEffectiveDate: openingEffectiveDateForEmployee(e.entryDate),
+            });
+          }
+        }
         for (const e of employees) {
           const planArr = afterPlanArrays.get(e.id)!;
           const actualArr = afterActualArrays.get(e.id)!;
@@ -398,16 +413,13 @@ export async function PUT(req: Request) {
           const before = beforeU.get(e.id) ?? 0;
           const delta = before - afterU;
           if (delta !== 0) {
-            vacationUpdates.push(
-              tx.employee.update({
-                where: { id: e.id },
-                data: { vacationDaysOpen: { increment: delta } },
-              })
-            );
+            await appendVacationLedger(tx, {
+              employeeId: e.id,
+              amount: delta,
+              kind: VacationLedgerKind.CONSUMPTION_ROTA,
+              note: `Woche ${weekStartStrPut} · Plan/Ist Urlaub`,
+            });
           }
-        }
-        if (vacationUpdates.length > 0) {
-          await Promise.all(vacationUpdates);
         }
       },
       { maxWait: 10_000, timeout: 60_000 }
