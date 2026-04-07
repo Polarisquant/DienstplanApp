@@ -125,7 +125,7 @@ export PLANNER_PASSWORD="ein-sicheres-passwort"
 3. **`vercel.json`** im Ordner `web` definiert einen **monatlichen** Cron am **1.** jeden Monats (**05:05 UTC**) auf diese Route — bucht den **Vormonat** (Urlaub ÷ 12). Vercel sendet beim Cron-Aufruf den **Bearer** automatisch, wenn `CRON_SECRET` im Projekt gesetzt ist (siehe [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs)).  
    **Hinweis:** Geplante Crons setzen ggf. einen **bezahlten** Vercel-Plan voraus — sonst Cron extern triggern (z. B. am 1. mit `curl`). Manueller Test am falschen Kalendertag: die Route **bucht nichts** (nur am 1. UTC).
 
-4. **Monatsgutschrift:** **5 Urlaubswochen × Arbeitstage/Woche** (z. B. 2 Tage/Wo. → 10 T/Jahr ÷ 12); **Stunden** ändern die **Anzahl** der Urlaubstage im System nicht. **`annualVacationDays`** wird beim Speichern mitangeglichen, wenn **Stunden oder Arbeitstage** geändert werden und kein eigener Jahresurlaub mitgeschickt wird. Eintrittsdatum nur für **Eröffnungsstichtag** im Journal.
+4. **Monatsgutschrift:** **5 Urlaubswochen × Arbeitstage/Woche** (max. 6 Tage/Wo.; z. B. 2 Tage/Wo. → 10 T/Jahr ÷ 12); **Stunden** ändern die **Anzahl** der Urlaubstage im System nicht. **`annualVacationDays`** in der DB wird bei **jedem** Speichern eines Mitarbeiters aus den dann gültigen **Arbeitstagen/Woche** (nach Vertrags-Sync) neu gesetzt — keine manuelle Eingabe. Eintrittsdatum nur für **Eröffnungsstichtag** im Journal.
 
 ### Performance (Vercel + Postgres) — weniger „klobig“
 

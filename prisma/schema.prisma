@@ -52,7 +52,7 @@ model Employee {
   workDaysPerWeek        Int
   startBalanceHours      Float        @default(0)
   vacationDaysOpen       Float        @default(0)
-  /// Jahresurlaub in Arbeitstagen (Anzeige; Monatsgutschrift: 5 Wo. × workDaysPerWeek, Stunden egal).
+  /// Jahresurlaub in Arbeitstagen (Cache; immer aus workDaysPerWeek abgeleitet: 5 Wo. × min(Tage/Wo., 6)).
   annualVacationDays     Float        @default(25)
   /// Zeilenreihenfolge im Dienstplan (Crush) — niedriger = weiter oben
   planSortOrderCrush     Int          @default(0)

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { annualVacationDaysFromWorkDaysPerWeek } from "@/lib/vacationAccrualAT";
 
 type WorkSiteVal = "CRUSH" | "CAPPUCONE" | "SHARED";
 
@@ -23,7 +24,7 @@ type Employee = {
   workDaysPerWeek: number;
   startBalanceHours: number;
   vacationDaysOpen: number;
-  /** Jahresurlaub Arbeitstage (Basis gesetzliche Aufbuchung) */
+  /** Jahresurlaub Arbeitstage (Cache; abgeleitet aus Arbeitstagen/Woche) */
   annualVacationDays: number;
   active: boolean;
   contracts?: ContractSlice[];
@@ -40,7 +41,6 @@ type EmployeeFormState = {
   workDaysPerWeek: number;
   startBalanceHours: string;
   vacationDaysOpen: string;
-  annualVacationDays: number;
   /** Nur Bearbeiten: zusätzlicher Vertrag ab (1. eines Monats) */
   contractChangeFrom: string;
   contractChangeHours: number;
@@ -83,7 +83,6 @@ const emptyForm: EmployeeFormState = {
   workDaysPerWeek: 5,
   startBalanceHours: "0",
   vacationDaysOpen: "0",
-  annualVacationDays: 25,
   contractChangeFrom: "",
   contractChangeHours: 30,
   contractChangeDays: 5,
@@ -153,7 +152,6 @@ export function MitarbeiterVerwaltung() {
         workDaysPerWeek: form.workDaysPerWeek,
         startBalanceHours,
         vacationDaysOpen,
-        annualVacationDays: form.annualVacationDays,
       }),
     });
     const j = await res.json().catch(() => ({}));
@@ -201,12 +199,6 @@ export function MitarbeiterVerwaltung() {
       workDaysPerWeek: cur?.workDaysPerWeek ?? emp.workDaysPerWeek,
       startBalanceHours: numToInputString(emp.startBalanceHours),
       vacationDaysOpen: numToInputString(emp.vacationDaysOpen),
-      annualVacationDays:
-        typeof emp.annualVacationDays === "number"
-          ? emp.annualVacationDays
-          : emp.workDaysPerWeek >= 6
-            ? 30
-            : 25,
       contractChangeFrom: "",
       contractChangeHours: 30,
       contractChangeDays: 5,
@@ -242,7 +234,6 @@ export function MitarbeiterVerwaltung() {
       workDaysPerWeek: editForm.workDaysPerWeek,
       startBalanceHours,
       vacationDaysOpen,
-      annualVacationDays: editForm.annualVacationDays,
       entryDate: editForm.entryDate.trim() || null,
       exitDate: editForm.exitDate.trim() || null,
     };
@@ -505,19 +496,15 @@ export function MitarbeiterVerwaltung() {
               className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
             />
           </Field>
-          <Field label="Jahresurlaub (Tage, KV)">
-            <input
-              type="number"
-              min={0}
-              max={60}
-              step={0.5}
-              value={form.annualVacationDays}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, annualVacationDays: Number(e.target.value) }))
-              }
-              title="Basis für gesetzliche Aufbuchung (vereinfachtes AT-Modell)"
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
-            />
+          <Field label="Jahresurlaub (Tage/Jahr, automatisch)">
+            <div
+              className="w-full rounded border border-dashed border-slate-200 bg-slate-50 px-2 py-1.5 text-sm tabular-nums text-slate-700"
+              title="5 Urlaubswochen × min(Arbeitstage/Woche, 6)"
+            >
+              {fmtDec2.format(
+                annualVacationDaysFromWorkDaysPerWeek(form.workDaysPerWeek)
+              )}
+            </div>
           </Field>
           <div className="md:col-span-2">
             <button
@@ -572,11 +559,7 @@ export function MitarbeiterVerwaltung() {
                     </td>
                     <td className="border border-slate-200 px-2 py-1 tabular-nums">
                       {fmtDec2.format(
-                        typeof emp.annualVacationDays === "number"
-                          ? emp.annualVacationDays
-                          : emp.workDaysPerWeek >= 6
-                            ? 30
-                            : 25
+                        annualVacationDaysFromWorkDaysPerWeek(emp.workDaysPerWeek)
                       )}
                     </td>
                     <td className="border border-slate-200 px-2 py-1">
@@ -851,22 +834,17 @@ export function MitarbeiterVerwaltung() {
                               className="w-full rounded border border-slate-300 px-2 py-1.5 font-mono text-sm tabular-nums"
                             />
                           </Field>
-                          <Field label="Jahresurlaub (Tage, KV)">
-                            <input
-                              type="number"
-                              min={0}
-                              max={60}
-                              step={0.5}
-                              value={editForm.annualVacationDays}
-                              onChange={(e) =>
-                                setEditForm((f) => ({
-                                  ...f,
-                                  annualVacationDays: Number(e.target.value),
-                                }))
-                              }
-                              title="Basis für gesetzliche Aufbuchung"
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm tabular-nums"
-                            />
+                          <Field label="Jahresurlaub (Tage/Jahr, automatisch)">
+                            <div
+                              className="w-full rounded border border-dashed border-slate-200 bg-slate-50 px-2 py-1.5 text-sm tabular-nums text-slate-700"
+                              title="5 Urlaubswochen × min(Arbeitstage/Woche, 6)"
+                            >
+                              {fmtDec2.format(
+                                annualVacationDaysFromWorkDaysPerWeek(
+                                  editForm.workDaysPerWeek
+                                )
+                              )}
+                            </div>
                           </Field>
                           <div className="flex items-end gap-2 md:col-span-2 lg:col-span-3">
                             <button
