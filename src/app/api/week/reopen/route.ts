@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { WeekStatus, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
-import { whereLaterClosedWeek } from "@/lib/workSite";
+import { whereLaterClosedWeek, workSiteLabel } from "@/lib/workSite";
 import { z } from "zod";
 
 const bodySchema = z.object({
@@ -43,13 +43,15 @@ export async function POST(req: Request) {
       orderBy: [{ weekStart: "asc" }, { site: "asc" }],
     });
     if (laterClosed) {
-      return NextResponse.json(
-        {
-          error:
-            "Eine spätere abgeschlossene Woche (gleicher oder späterer Kalendertag / anderer Standort) existiert. Bitte zuerst von hinten nach vorne wieder öffnen.",
-        },
-        { status: 409 }
-      );
+      const blockISO = formatWeekStart(laterClosed.weekStart);
+      const currentISO = formatWeekStart(weekStart);
+      const de = blockISO.split("-").reverse().join(".");
+      const sameMondayOtherSite =
+        currentISO === blockISO && laterClosed.site !== site;
+      const detail = sameMondayOtherSite
+        ? `Am Standort „${workSiteLabel(laterClosed.site)}“ ist diese Kalenderwoche noch abgeschlossen — dort zuerst „Woche wieder öffnen“, danach hier erneut versuchen.`
+        : `Zuerst die Woche ab ${de} (${workSiteLabel(laterClosed.site)}) wieder öffnen (von hinten nach vorne).`;
+      return NextResponse.json({ error: detail }, { status: 409 });
     }
 
     await prisma.$transaction([

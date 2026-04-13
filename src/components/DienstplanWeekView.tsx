@@ -728,32 +728,38 @@ export function DienstplanWeekView() {
     return () => ac.abort();
   }, [showWeather, weekStart]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setMsg(null);
-    try {
-      const res = await fetch(
-        `/api/week?start=${encodeURIComponent(weekStart)}&site=${encodeURIComponent(workSite)}`
-      );
-      if (!res.ok) throw new Error("Laden fehlgeschlagen");
-      const json: WeekPayload = await res.json();
-      setData(json);
-      const g: Record<string, GridRow> = {};
-      for (const r of json.rows) {
-        g[r.employee.id] = {
-          plan: [...r.plan],
-          actual: [...r.actual],
-          planNotes: [...(r.planNotes ?? Array(7).fill(""))],
-          actualNotes: [...(r.actualNotes ?? Array(7).fill(""))],
-        };
+  const load = useCallback(
+    async (opts?: { preserveMessage?: boolean }): Promise<WeekPayload | null> => {
+      setLoading(true);
+      if (!opts?.preserveMessage) setMsg(null);
+      try {
+        const res = await fetch(
+          `/api/week?start=${encodeURIComponent(weekStart)}&site=${encodeURIComponent(workSite)}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) throw new Error("Laden fehlgeschlagen");
+        const json: WeekPayload = await res.json();
+        setData(json);
+        const g: Record<string, GridRow> = {};
+        for (const r of json.rows) {
+          g[r.employee.id] = {
+            plan: [...r.plan],
+            actual: [...r.actual],
+            planNotes: [...(r.planNotes ?? Array(7).fill(""))],
+            actualNotes: [...(r.actualNotes ?? Array(7).fill(""))],
+          };
+        }
+        setGrid(g);
+        return json;
+      } catch {
+        setMsg("Woche konnte nicht geladen werden.");
+        return null;
+      } finally {
+        setLoading(false);
       }
-      setGrid(g);
-    } catch {
-      setMsg("Woche konnte nicht geladen werden.");
-    } finally {
-      setLoading(false);
-    }
-  }, [weekStart, workSite]);
+    },
+    [weekStart, workSite]
+  );
 
   useEffect(() => {
     void load();
@@ -1004,7 +1010,7 @@ export function DienstplanWeekView() {
         return;
       }
       setMsg("Gespeichert.");
-      await load();
+      await load({ preserveMessage: true });
     } catch {
       setMsg(
         "Netzwerkfehler beim Speichern — bitte Verbindung prüfen und erneut versuchen."
@@ -1034,7 +1040,7 @@ export function DienstplanWeekView() {
         return;
       }
       setMsg("Woche abgeschlossen.");
-      await load();
+      await load({ preserveMessage: true });
     } finally {
       setSaving(false);
     }
@@ -1056,14 +1062,32 @@ export function DienstplanWeekView() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ start: weekStart, site: workSite }),
+        cache: "no-store",
       });
-      const j = await res.json().catch(() => ({}));
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        setMsg(j.error ?? "Wieder öffnen fehlgeschlagen.");
+        const apiErr = j.error?.trim();
+        setMsg(
+          apiErr && apiErr.length > 0
+            ? apiErr
+            : res.status === 401
+              ? "Sitzung ungültig — bitte neu anmelden."
+              : `Wieder öffnen fehlgeschlagen (HTTP ${res.status}).`
+        );
+        return;
+      }
+      const refreshed = await load({ preserveMessage: true });
+      if (refreshed?.status === "CLOSED") {
+        setMsg(
+          "Der Server hat geantwortet, die Woche erscheint aber noch als abgeschlossen. Bitte Seite neu laden. Falls Sie zwei Standorte nutzen: dieselbe Kalenderwoche am anderen Standort muss ebenfalls geöffnet sein."
+        );
         return;
       }
       setMsg("Woche wieder geöffnet — bearbeiten und Speichern möglich.");
-      await load();
+    } catch {
+      setMsg(
+        "Netzwerkfehler beim Wiederöffnen — bitte Verbindung prüfen und erneut versuchen."
+      );
     } finally {
       setSaving(false);
     }

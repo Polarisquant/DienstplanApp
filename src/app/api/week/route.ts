@@ -229,15 +229,22 @@ export async function GET(req: Request) {
     };
   });
 
-  return NextResponse.json({
-    weekStart: weekStartStr,
-    site: workSiteToParam(site),
-    status: week.status,
-    isoWeek: isoWeekNumberUTC(start),
-    feiDaysInWeek,
-    days,
-    rows,
-  });
+  return NextResponse.json(
+    {
+      weekStart: weekStartStr,
+      site: workSiteToParam(site),
+      status: week.status,
+      isoWeek: isoWeekNumberUTC(start),
+      feiDaysInWeek,
+      days,
+      rows,
+    },
+    {
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+      },
+    }
+  );
 }
 
 const putSchema = z.object({
