@@ -42,22 +42,17 @@ export function workSiteLabel(s: WorkSite): string {
   return s === WorkSite.CRUSH ? "Crush" : "CappuCone";
 }
 
-/** Für „Woche wieder öffnen“: gibt es eine spätere abgeschlossene (weekStart, site)? */
+/**
+ * Für „Woche wieder öffnen“: spätere abgeschlossene Woche **am selben Standort**.
+ * Standorte sind unabhängig; Ketten-Bruch vermeidet nur noch dieselbe Filiale.
+ */
 export function whereLaterClosedWeek(
   weekStart: Date,
   site: WorkSite
 ): Prisma.WorkWeekWhereInput {
-  if (site === WorkSite.CRUSH) {
-    return {
-      status: WeekStatus.CLOSED,
-      OR: [
-        { weekStart: { gt: weekStart } },
-        { AND: [{ weekStart }, { site: WorkSite.CAPPUCONE }] },
-      ],
-    };
-  }
   return {
     status: WeekStatus.CLOSED,
+    site,
     weekStart: { gt: weekStart },
   };
 }

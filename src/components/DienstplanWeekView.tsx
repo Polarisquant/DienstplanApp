@@ -1050,7 +1050,7 @@ export function DienstplanWeekView() {
     if (!data || data.status !== "CLOSED") return;
     if (
       !confirm(
-        "Abgeschlossene Woche wieder öffnen? Die Buchung des Zeitkontos für diese Woche wird entfernt. Spätere abgeschlossene Wochen müssen zuerst selbst wieder geöffnet werden."
+        "Abgeschlossene Woche wieder öffnen? Die Buchung des Zeitkontos für diese Woche wird entfernt. Spätere abgeschlossene Wochen am selben Standort müssen zuerst wieder geöffnet werden."
       )
     ) {
       return;

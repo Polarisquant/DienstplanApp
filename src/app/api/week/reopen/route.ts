@@ -12,7 +12,7 @@ const bodySchema = z.object({
 
 /**
  * Geschlossene Woche wieder öffnen: Zeitkonto-Zeilen dieser Woche entfernen, Status DRAFT.
- * Nur wenn keine spätere (Kalenderwoche, Standort)-Position abgeschlossen ist.
+ * Nur wenn am selben Standort keine spätere Kalenderwoche noch abgeschlossen ist.
  */
 export async function POST(req: Request) {
   try {
@@ -44,14 +44,13 @@ export async function POST(req: Request) {
     });
     if (laterClosed) {
       const blockISO = formatWeekStart(laterClosed.weekStart);
-      const currentISO = formatWeekStart(weekStart);
       const de = blockISO.split("-").reverse().join(".");
-      const sameMondayOtherSite =
-        currentISO === blockISO && laterClosed.site !== site;
-      const detail = sameMondayOtherSite
-        ? `Am Standort „${workSiteLabel(laterClosed.site)}“ ist diese Kalenderwoche noch abgeschlossen — dort zuerst „Woche wieder öffnen“, danach hier erneut versuchen.`
-        : `Zuerst die Woche ab ${de} (${workSiteLabel(laterClosed.site)}) wieder öffnen (von hinten nach vorne).`;
-      return NextResponse.json({ error: detail }, { status: 409 });
+      return NextResponse.json(
+        {
+          error: `Zuerst am Standort „${workSiteLabel(site)}“ die Woche ab ${de} wieder öffnen (von hinten nach vorne).`,
+        },
+        { status: 409 }
+      );
     }
 
     await prisma.$transaction([
