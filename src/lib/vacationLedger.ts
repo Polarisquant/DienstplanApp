@@ -13,17 +13,74 @@ import {
 type Tx = Prisma.TransactionClient;
 
 /**
- * Vormonat als YYYY-MM, nur wenn `runOnUtc` der **1.** eines Kalendermonats ist (UTC).
- * Cron bucht dann den gerade beendeten Monat.
+ * Vormonat als YYYY-MM für **automatischen** Cron (ohne `period`-Parameter).
+ *
+ * Fenster: **UTC-Kalendertage 1–3** des aktuellen Monats → Buchung des **Vormonats**.
+ * Grund: Streng nur Tag 1 ist fragil (Invocations kurz nach Mitternacht UTC, seltene
+ * Plattform-Randfälle). **Dedupe** über `VacationLedger.accrualPeriod` verhindert Doppelbuchung,
+ * wenn der Job mehrfach läuft (Vercel empfiehlt idempotente Crons).
  */
 export function accrualPeriodForCronRun(runOnUtc: Date): string | null {
-  if (runOnUtc.getUTCDate() !== 1) return null;
+  const day = runOnUtc.getUTCDate();
+  if (day < 1 || day > 3) return null;
   const y = runOnUtc.getUTCFullYear();
   const m = runOnUtc.getUTCMonth();
   const prev = new Date(Date.UTC(y, m - 1, 1));
   const py = prev.getUTCFullYear();
   const pm = String(prev.getUTCMonth() + 1).padStart(2, "0");
   return `${py}-${pm}`;
+}
+
+/** Validiert `YYYY-MM` für Nachbuchungen / API (Kalendermonat der Gutschrift). */
+export function parseAccrualPeriodYYYYMM(raw: string): string | null {
+  const s = raw.trim();
+  if (!/^\d{4}-\d{2}$/.test(s)) return null;
+  const m = Number(s.slice(5, 7));
+  if (!Number.isInteger(m) || m < 1 || m > 12) return null;
+  return s;
+}
+
+export type VacationAccrualRunMode = "cron_auto" | "explicit_period";
+
+/**
+ * Welcher Kalendermonat gebucht werden soll.
+ * - Ohne `explicitPeriodRaw`: wie Cron — **UTC-Tage 1–3** → Vormonat, sonst kein Period.
+ * - Mit gültigem `explicitPeriodRaw`: immer dieser Monat (Nachbuchung), gleiche Auth wie Cron.
+ */
+export function resolveVacationAccrualPeriod(
+  runAtUtc: Date,
+  explicitPeriodRaw?: string | null
+): {
+  period: string | null;
+  skipReason: string | null;
+  mode: VacationAccrualRunMode;
+} {
+  const trimmed =
+    explicitPeriodRaw != null && explicitPeriodRaw.trim() !== ""
+      ? explicitPeriodRaw.trim()
+      : null;
+
+  if (trimmed !== null) {
+    const parsed = parseAccrualPeriodYYYYMM(trimmed);
+    if (!parsed) {
+      return {
+        period: null,
+        skipReason: "invalid_period_expected_yyyy_mm",
+        mode: "explicit_period",
+      };
+    }
+    return { period: parsed, skipReason: null, mode: "explicit_period" };
+  }
+
+  const auto = accrualPeriodForCronRun(runAtUtc);
+  if (!auto) {
+    return {
+      period: null,
+      skipReason: "cron_auto_outside_accrual_window_utc",
+      mode: "cron_auto",
+    };
+  }
+  return { period: auto, skipReason: null, mode: "cron_auto" };
 }
 
 function lastDayISOOfMonth(periodYYYYMM: string): string {
@@ -222,22 +279,35 @@ export async function applyMonthlyContractAccrualForEmployee(
 }
 
 /**
- * Monatsabschluss für alle aktiven Mitarbeiter. Läuft sinnvoll nur am **1.** des Monats (UTC);
- * sonst wird nichts gebucht (`skipped: true`).
+ * Monatsabschluss für alle aktiven Mitarbeiter.
+ * - **Cron:** ohne `periodYYYYMM` nur **UTC-Tage 1–3** → Buchung **Vormonat**.
+ * - **Nachbuchung:** `periodYYYYMM: "2026-04"` (nach Auth) → Buchung dieses Monats (Dedupe über `accrualPeriod`).
  */
 export async function processMonthlyVacationAccrualAll(
   prisma: PrismaClient,
-  options?: { now?: Date }
+  options?: { now?: Date; periodYYYYMM?: string | null }
 ): Promise<{
   employees: number;
   postedTotal: number;
   period: string | null;
   skipped: boolean;
+  skipReason: string | null;
+  mode: VacationAccrualRunMode;
 }> {
   const runAt = options?.now ?? new Date();
-  const period = accrualPeriodForCronRun(runAt);
+  const { period, skipReason, mode } = resolveVacationAccrualPeriod(
+    runAt,
+    options?.periodYYYYMM
+  );
   if (!period) {
-    return { employees: 0, postedTotal: 0, period: null, skipped: true };
+    return {
+      employees: 0,
+      postedTotal: 0,
+      period: null,
+      skipped: true,
+      skipReason,
+      mode,
+    };
   }
 
   const employees = await prisma.employee.findMany({
@@ -270,5 +340,7 @@ export async function processMonthlyVacationAccrualAll(
     postedTotal,
     period,
     skipped: false,
+    skipReason: null,
+    mode,
   };
 }

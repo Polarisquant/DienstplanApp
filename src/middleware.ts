@@ -24,6 +24,11 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname.startsWith("/api")) {
+    /** Cron: eigene Auth via `CRON_SECRET` im Route-Handler — keine Planner-Session. */
+    if (pathname.startsWith("/api/cron/vacation-accrual")) {
+      return NextResponse.next();
+    }
+
     const token = request.cookies.get(SESSION_COOKIE)?.value;
     if (!token) {
       return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });

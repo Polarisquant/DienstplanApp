@@ -123,9 +123,17 @@ export PLANNER_PASSWORD="ein-sicheres-passwort"
 2. **`CRON_SECRET`**: in Vercel **Production** setzen. Die Route `/api/cron/vacation-accrual` akzeptiert nur Aufrufe mit `Authorization: Bearer <CRON_SECRET>` oder Query `?secret=`.
 
 3. **`vercel.json`** im Ordner `web` definiert einen **monatlichen** Cron am **1.** jeden Monats (**05:05 UTC**) auf diese Route — bucht den **Vormonat** (Urlaub ÷ 12). Vercel sendet beim Cron-Aufruf den **Bearer** automatisch, wenn `CRON_SECRET` im Projekt gesetzt ist (siehe [Vercel Cron Jobs](https://vercel.com/docs/cron-jobs)).  
-   **Hinweis:** Geplante Crons setzen ggf. einen **bezahlten** Vercel-Plan voraus — sonst Cron extern triggern (z. B. am 1. mit `curl`). Manueller Test am falschen Kalendertag: die Route **bucht nichts** (nur am 1. UTC).
+   **Hinweis:** Geplante Crons setzen ggf. einen **bezahlten** Vercel-Plan voraus — sonst Cron extern triggern (z. B. am 1. mit `curl`). Ohne `period`: automatische Buchung nur an den **UTC-Tagen 1–3** (Vormonat; Dedupe sichert gegen Doppel-Lauf) — sonst JSON mit `skipped: true`, `skipReason: "cron_auto_outside_accrual_window_utc"`.  
+   **Nachbuchung** (ausgefallener Cron, z. B. April verpasst): gleiche Auth, Monat explizit angeben:
 
-4. **Monatsgutschrift:** **5 Urlaubswochen × Arbeitstage/Woche** (max. 6 Tage/Wo.; z. B. 2 Tage/Wo. → 10 T/Jahr ÷ 12); **Stunden** ändern die **Anzahl** der Urlaubstage im System nicht. **`annualVacationDays`** in der DB wird bei **jedem** Speichern eines Mitarbeiters aus den dann gültigen **Arbeitstagen/Woche** (nach Vertrags-Sync) neu gesetzt — keine manuelle Eingabe. Eintrittsdatum nur für **Eröffnungsstichtag** im Journal.
+   ```bash
+   curl -s -X POST -H "Authorization: Bearer $CRON_SECRET" \
+     "https://<production-host>/api/cron/vacation-accrual?period=2026-04"
+   ```
+
+   oder `curl … -H "Content-Type: application/json" -d '{"period":"2026-04"}' …`. Doppelbuchungen verhindert Prisma am Feld `accrualPeriod` pro Monat und Mitarbeiter (bereits gebucht → Übersprung).
+
+4. **Monatsgutschrift:** **5 Urlaubswochen × Arbeitstage/Woche** (max. 6 Tage/Wo.; z. B. 2 Tage/Wo. → 10 T/Jahr ÷ 12); **Stunden** ändern die **Anzahl** der Urlaubstage im System nicht. **`annualVacationDays`** in der DB wird bei **jedem** Speichern eines Mitarbeiters aus den dann gültigen **Arbeitstagen/Woche** (nach Vertrags-Sync) neu gesetzt — keine manuelle Eingabe. Eintrittsdatum nur für **Eröffnungsstichtag** im Journal. **Semantik:** Am **1. Juni** wird die Gutschrift für den Kalendermonat **Mai** gebucht (immer der **abgeschlossene Vormonat**); die April-Gutschrift war am **1. Mai** fällig — wenn die ausgefallen ist, mit `period=2026-04` nachbuchen.
 
 ### Performance (Vercel + Postgres) — weniger „klobig“
 
