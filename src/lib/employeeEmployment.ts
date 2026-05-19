@@ -35,20 +35,42 @@ export function weekExitScope(
   return "none";
 }
 
-const STRIPE =
-  "bg-[repeating-linear-gradient(-45deg,transparent,transparent_5px,rgb(148_163_184/0.22)_5px,rgb(148_163_184/0.22)_10px)]";
+const SLATE_STRIPE =
+  "bg-[repeating-linear-gradient(-45deg,transparent,transparent_5px,rgb(148_163_184/0.18)_5px,rgb(148_163_184/0.18)_10px)]";
+
+/** Dezentes Rot für Austritt / nach Austritt */
+const RED_STRIPE =
+  "bg-[repeating-linear-gradient(-45deg,transparent,transparent_5px,rgb(254_202_202/0.28)_5px,rgb(254_202_202/0.28)_10px)]";
 
 export function employmentDayShellClasses(mark: EmploymentDayMark): string {
   switch (mark) {
     case "after_exit":
-      return `${STRIPE} bg-slate-100/90`;
+      return `${RED_STRIPE} bg-red-50/45`;
     case "before_entry":
-      return `${STRIPE} bg-slate-50/95`;
+      return `${SLATE_STRIPE} bg-slate-50/95`;
     case "exit_last_day":
-      return "ring-2 ring-inset ring-orange-500 bg-orange-50/80";
+      return "ring-2 ring-inset ring-red-300/90 bg-red-50/70";
     default:
       return "";
   }
+}
+
+/** Leichte Zeilenmarkierung in der Namensspalte */
+export function weekExitScopeRowClasses(scope: WeekExitScope): string {
+  switch (scope) {
+    case "exit_week":
+      return "border-l-[3px] border-l-red-300/80 bg-red-50/35";
+    case "after_exit":
+      return "border-l-[3px] border-l-red-400/70 bg-red-50/50";
+    default:
+      return "";
+  }
+}
+
+/** Summenspalten (WS, ZAG, o. U.) in Austrittswochen */
+export function weekExitScopeSummaryColClasses(scope: WeekExitScope): string {
+  if (scope === "none") return "";
+  return scope === "after_exit" ? "bg-red-50/40" : "bg-red-50/25";
 }
 
 export function employmentDayTitle(mark: EmploymentDayMark): string | undefined {
@@ -64,6 +86,9 @@ export function employmentDayTitle(mark: EmploymentDayMark): string | undefined 
   }
 }
 
+const EXIT_BADGE_BASE =
+  "mt-0.5 inline-block max-w-full rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight tracking-tight ring-1 ring-inset";
+
 export function weekExitRowBadge(
   scope: WeekExitScope,
   exitDateISO: string
@@ -72,13 +97,13 @@ export function weekExitRowBadge(
   if (scope === "exit_week") {
     return {
       text: `Austritt ${d}`,
-      className: "text-orange-800",
+      className: `${EXIT_BADGE_BASE} bg-red-50 text-red-800 ring-red-200/90`,
     };
   }
   if (scope === "after_exit") {
     return {
       text: `ausgeschieden ab ${d}`,
-      className: "text-slate-600",
+      className: `${EXIT_BADGE_BASE} bg-red-50/90 text-red-700/95 ring-red-200/75`,
     };
   }
   return null;

@@ -20,6 +20,8 @@ import {
   employmentDayTitle,
   weekExitRowBadge,
   weekExitScope,
+  weekExitScopeRowClasses,
+  weekExitScopeSummaryColClasses,
 } from "@/lib/employeeEmployment";
 import { firstContractEffectiveFromISO } from "@/lib/firstContractDate";
 import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
@@ -1841,7 +1843,9 @@ export function DienstplanWeekView() {
 
                   return (
                     <tr key={r.employee.id} className="border-b-2 border-slate-400 align-top">
-                      <td className="border-2 border-slate-400 bg-[var(--rota-rail)] px-1.5 py-1.5 text-[15px] font-semibold text-slate-900">
+                      <td
+                        className={`border-2 border-slate-400 bg-[var(--rota-rail)] px-1.5 py-1.5 text-[15px] font-semibold text-slate-900 ${weekExitScopeRowClasses(exitScope)}`}
+                      >
                         <div className="flex items-start gap-1.5">
                           {!readOnly ? (
                             <div className="no-print flex shrink-0 flex-col gap-0 border-r border-slate-200/80 pr-1">
@@ -1874,11 +1878,7 @@ export function DienstplanWeekView() {
                           <span className="min-w-0 pt-0.5">
                             {label}
                             {exitBadge ? (
-                              <span
-                                className={`mt-0.5 block text-[11px] font-bold leading-tight ${exitBadge.className}`}
-                              >
-                                {exitBadge.text}
-                              </span>
+                              <span className={exitBadge.className}>{exitBadge.text}</span>
                             ) : null}
                           </span>
                         </div>
@@ -1903,11 +1903,13 @@ export function DienstplanWeekView() {
                           />
                         );
                       })}
-                      <td className="border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900">
+                      <td
+                        className={`border-2 border-slate-400 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900 bg-slate-50/80 ${weekExitScopeSummaryColClasses(exitScope)}`}
+                      >
                         {fmt.format(weeklyHoursShown)}
                       </td>
                       <td
-                        className={`border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums ${
+                        className={`border-2 border-slate-400 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums bg-slate-50/80 ${weekExitScopeSummaryColClasses(exitScope)} ${
                           zagLive < 0 ? "text-red-700" : "text-slate-900"
                         }`}
                         title={
@@ -1918,10 +1920,14 @@ export function DienstplanWeekView() {
                       >
                         {fmt.format(zagLive)}
                       </td>
-                      <td className="border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900">
+                      <td
+                        className={`border-2 border-slate-400 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900 bg-slate-50/80 ${weekExitScopeSummaryColClasses(exitScope)}`}
+                      >
                         {fmtVacDays.format(vacationShown)} T
                       </td>
-                      <td className="border-2 border-slate-400 bg-slate-50/80 px-1 py-1.5 text-center">
+                      <td
+                        className={`border-2 border-slate-400 px-1 py-1.5 text-center bg-slate-50/80 ${weekExitScopeSummaryColClasses(exitScope)}`}
+                      >
                         {warnN > 0 ? (
                           <button
                             type="button"
