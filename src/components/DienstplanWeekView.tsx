@@ -180,6 +180,16 @@ const ABBREV_BADGE: Record<
   },
 };
 
+function rotaDayCellTdClasses(
+  kind: ShiftAbbrevUiKind | null,
+  employmentMark: ReturnType<typeof employmentDayMark>
+): string {
+  if (employmentMark === "exit_last_day") {
+    return "border-2 border-red-400 bg-red-50/90";
+  }
+  return `${rotaShiftCellShellClasses(kind)} ${employmentDayShellClasses(employmentMark)}`.trim();
+}
+
 function rotaShiftCellShellClasses(kind: ShiftAbbrevUiKind | null): string {
   const base = "border-2 border-slate-400";
   if (!kind) return `${base} bg-white`;
@@ -208,6 +218,26 @@ function rotaAbbrevMarkChar(kind: ShiftAbbrevUiKind): string {
   }
 }
 
+function rotaPrintDayCellBody(
+  cell: string,
+  note: string,
+  employmentMark: ReturnType<typeof employmentDayMark>
+) {
+  return (
+    <>
+      {employmentMark === "exit_last_day" ? (
+        <div className="mb-0.5 text-[8px] font-bold uppercase tracking-wide text-red-700">
+          Austritt
+        </div>
+      ) : null}
+      <div>{cell.trim() || "—"}</div>
+      {note.trim() ? (
+        <div className="mt-0.5 text-[9px] font-medium text-slate-700">{note.trim()}</div>
+      ) : null}
+    </>
+  );
+}
+
 function rotaPrintCellClass(
   raw: string,
   employmentMark: ReturnType<typeof employmentDayMark> = "active"
@@ -215,6 +245,9 @@ function rotaPrintCellClass(
   const k = shiftAbbrevUiKind(raw ?? "");
   const base =
     "border-2 border-slate-500 px-1 py-1 align-top text-[11px] font-semibold leading-snug text-slate-900 print:text-xs";
+  if (employmentMark === "exit_last_day") {
+    return `${base} border-red-400 bg-red-50/90`;
+  }
   const emp = employmentDayShellClasses(employmentMark);
   if (!k) return emp ? `${base} ${emp}` : base;
   return `${base} ${ABBREV_BADGE[k].printBg}${emp ? ` ${emp}` : ""}`;
@@ -257,9 +290,12 @@ function RotaDayCell({
   onNoteChange,
 }: RotaDayCellProps) {
   const abbrKind = shiftAbbrevUiKind(val ?? "");
-  const employmentShell = employmentDayShellClasses(employmentMark);
-  const shell = `${rotaShiftCellShellClasses(abbrKind)} ${employmentShell}`.trim();
+  const isExitDay = employmentMark === "exit_last_day";
+  const shell = rotaDayCellTdClasses(abbrKind, employmentMark);
   const employmentHint = employmentDayTitle(employmentMark);
+  const focusRingClass = isExitDay
+    ? "focus:ring-red-400"
+    : "focus:ring-[var(--rota-header)]";
   const badgeMeta = abbrKind ? ABBREV_BADGE[abbrKind] : null;
   const [shiftFocused, setShiftFocused] = useState(false);
   const noteRef = useRef<HTMLInputElement>(null);
@@ -278,12 +314,14 @@ function RotaDayCell({
 
   const dis = readOnly ? "disabled:bg-slate-100/80 disabled:opacity-95" : "";
 
-  let shiftClass = `rota-shift-input-fluid w-full min-w-0 rounded-md border-2 py-1 font-semibold leading-tight tracking-tight outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] ${shiftMinH} ${dis}`;
+  let shiftClass = `rota-shift-input-fluid w-full min-w-0 rounded-md border-2 py-1 font-semibold leading-tight tracking-tight outline-none focus:ring-2 focus:ring-inset ${focusRingClass} ${shiftMinH} ${dis}`;
 
   if (!abbrKind) {
     shiftClass += showAbbrevTile
       ? ""
-      : ` border-slate-400 bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-medium`;
+      : isExitDay
+        ? " border-red-300/80 bg-red-50/60 text-slate-900 placeholder:text-red-400/70 placeholder:font-medium"
+        : ` border-slate-400 bg-white text-slate-900 placeholder:text-slate-400 placeholder:font-medium`;
   } else if (showAbbrevTile) {
     shiftClass += ` border-transparent bg-transparent text-transparent shadow-none ${rotaAbbrevCaretClass(abbrKind)}`;
   } else {
@@ -314,7 +352,17 @@ function RotaDayCell({
       className={`rota-day-cell-cq relative p-0 align-stretch ${shell}`}
       title={employmentHint}
     >
-      <div className="flex h-full min-h-0 flex-col gap-1 p-1 pb-3">
+      {isExitDay ? (
+        <span
+          className="pointer-events-none absolute left-1 top-1 z-20 rounded bg-red-600 px-1 py-px text-[9px] font-bold leading-tight tracking-wide text-white shadow-sm"
+          aria-hidden
+        >
+          Austritt
+        </span>
+      ) : null}
+      <div
+        className={`flex h-full min-h-0 flex-col gap-1 p-1 pb-3 ${isExitDay ? "pt-4" : ""}`}
+      >
         <div
           className={`relative flex min-w-0 flex-1 items-center justify-center ${noteRowVisible ? "" : "min-h-[4.15rem]"}`}
         >
@@ -339,7 +387,7 @@ function RotaDayCell({
             onBlur={() => setShiftFocused(false)}
             className={`relative z-10 box-border ${shiftClass}`}
             title={badgeMeta?.title}
-            aria-label={`Schicht ${dayShort}${badgeMeta ? `, ${badgeMeta.title}` : ""}`}
+            aria-label={`Schicht ${dayShort}${isExitDay ? ", Austritt" : ""}${badgeMeta ? `, ${badgeMeta.title}` : ""}`}
           />
         </div>
         {noteRowVisible ? (
@@ -349,7 +397,11 @@ function RotaDayCell({
             value={note ?? ""}
             onChange={(e) => onNoteChange(e.target.value)}
             onBlur={onNoteBlur}
-            className="h-7 w-full min-w-[6.5rem] shrink-0 rounded-md border-2 border-dashed border-slate-400 bg-slate-100/90 px-2 text-[12px] font-medium text-slate-800 outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--rota-header)] disabled:bg-slate-200/80"
+            className={`h-7 w-full min-w-[6.5rem] shrink-0 rounded-md border-2 border-dashed px-2 text-[12px] font-medium outline-none focus:ring-2 focus:ring-inset ${focusRingClass} disabled:bg-slate-200/80 ${
+              isExitDay
+                ? "border-red-300/70 bg-red-50/50 text-slate-800"
+                : "border-slate-400 bg-slate-100/90 text-slate-800"
+            }`}
             aria-label={`Notiz ${dayShort}`}
             placeholder="Notiz …"
             maxLength={2000}
@@ -2025,26 +2077,22 @@ export function DienstplanWeekView() {
                             </div>
                           ) : null}
                         </td>
-                        {plan.map((cell, di) => (
-                          <td
-                            key={di}
-                            className={rotaPrintCellClass(
-                              cell ?? "",
-                              employmentDayMark(
-                                data.days[di]?.dateISO ?? "",
-                                r.employee.entryDate ?? null,
-                                r.employee.exitDate ?? null
-                              )
-                            )}
-                          >
-                            <div>{(cell ?? "").trim() || "—"}</div>
-                            {(planNotes[di] ?? "").trim() ? (
-                              <div className="mt-0.5 text-[9px] font-medium text-slate-700">
-                                {(planNotes[di] ?? "").trim()}
-                              </div>
-                            ) : null}
-                          </td>
-                        ))}
+                        {plan.map((cell, di) => {
+                          const empMark = employmentDayMark(
+                            data.days[di]?.dateISO ?? "",
+                            r.employee.entryDate ?? null,
+                            r.employee.exitDate ?? null
+                          );
+                          return (
+                            <td key={di} className={rotaPrintCellClass(cell ?? "", empMark)}>
+                              {rotaPrintDayCellBody(
+                                cell ?? "",
+                                planNotes[di] ?? "",
+                                empMark
+                              )}
+                            </td>
+                          );
+                        })}
                         <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                           {fmt.format(livePlan.weeklyHours)}
                         </td>
@@ -2083,26 +2131,22 @@ export function DienstplanWeekView() {
                           </div>
                         ) : null}
                       </td>
-                      {actual.map((cell, di) => (
-                        <td
-                          key={di}
-                          className={rotaPrintCellClass(
-                            cell ?? "",
-                            employmentDayMark(
-                              data.days[di]?.dateISO ?? "",
-                              r.employee.entryDate ?? null,
-                              r.employee.exitDate ?? null
-                            )
-                          )}
-                        >
-                          <div>{(cell ?? "").trim() || "—"}</div>
-                          {(actualNotes[di] ?? "").trim() ? (
-                            <div className="mt-0.5 text-[9px] font-medium text-slate-700">
-                              {(actualNotes[di] ?? "").trim()}
-                            </div>
-                          ) : null}
-                        </td>
-                      ))}
+                      {actual.map((cell, di) => {
+                        const empMark = employmentDayMark(
+                          data.days[di]?.dateISO ?? "",
+                          r.employee.entryDate ?? null,
+                          r.employee.exitDate ?? null
+                        );
+                        return (
+                          <td key={di} className={rotaPrintCellClass(cell ?? "", empMark)}>
+                            {rotaPrintDayCellBody(
+                              cell ?? "",
+                              actualNotes[di] ?? "",
+                              empMark
+                            )}
+                          </td>
+                        );
+                      })}
                       <td className="border-2 border-slate-500 bg-slate-100 px-1 py-1 text-right text-xs font-semibold tabular-nums">
                         {fmt.format(liveActual.weeklyHours)}
                       </td>

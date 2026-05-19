@@ -49,7 +49,7 @@ export function employmentDayShellClasses(mark: EmploymentDayMark): string {
     case "before_entry":
       return `${SLATE_STRIPE} bg-slate-50/95`;
     case "exit_last_day":
-      return "ring-2 ring-inset ring-red-300/90 bg-red-50/70";
+      return "border-2 border-red-400 bg-red-50/90";
     default:
       return "";
   }
