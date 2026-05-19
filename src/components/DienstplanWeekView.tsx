@@ -14,6 +14,13 @@ import {
   defaultWeekStartISO,
   weekStartISOContainingDate,
 } from "@/lib/dateNav";
+import {
+  employmentDayMark,
+  employmentDayShellClasses,
+  employmentDayTitle,
+  weekExitRowBadge,
+  weekExitScope,
+} from "@/lib/employeeEmployment";
 import { firstContractEffectiveFromISO } from "@/lib/firstContractDate";
 import { austrianLaborHintsForWeek } from "@/lib/austrianLaborHints";
 import {
@@ -69,6 +76,7 @@ type RowDTO = {
     vacationDaysOpen: number;
     /** Für Fallback-Vertrag ohne Historie-Zeilen */
     entryDate?: string | null;
+    exitDate?: string | null;
   };
   plan: string[];
   actual: string[];
@@ -198,12 +206,16 @@ function rotaAbbrevMarkChar(kind: ShiftAbbrevUiKind): string {
   }
 }
 
-function rotaPrintCellClass(raw: string): string {
+function rotaPrintCellClass(
+  raw: string,
+  employmentMark: ReturnType<typeof employmentDayMark> = "active"
+): string {
   const k = shiftAbbrevUiKind(raw ?? "");
   const base =
     "border-2 border-slate-500 px-1 py-1 align-top text-[11px] font-semibold leading-snug text-slate-900 print:text-xs";
-  if (!k) return base;
-  return `${base} ${ABBREV_BADGE[k].printBg}`;
+  const emp = employmentDayShellClasses(employmentMark);
+  if (!k) return emp ? `${base} ${emp}` : base;
+  return `${base} ${ABBREV_BADGE[k].printBg}${emp ? ` ${emp}` : ""}`;
 }
 
 function rotaAbbrevCaretClass(kind: ShiftAbbrevUiKind): string {
@@ -224,6 +236,7 @@ type RotaDayCellProps = {
   readOnly: boolean;
   val: string;
   note: string;
+  employmentMark?: ReturnType<typeof employmentDayMark>;
   onValChange: (v: string) => void;
   onNoteChange: (v: string) => void;
 };
@@ -237,11 +250,14 @@ function RotaDayCell({
   readOnly,
   val,
   note,
+  employmentMark = "active",
   onValChange,
   onNoteChange,
 }: RotaDayCellProps) {
   const abbrKind = shiftAbbrevUiKind(val ?? "");
-  const shell = rotaShiftCellShellClasses(abbrKind);
+  const employmentShell = employmentDayShellClasses(employmentMark);
+  const shell = `${rotaShiftCellShellClasses(abbrKind)} ${employmentShell}`.trim();
+  const employmentHint = employmentDayTitle(employmentMark);
   const badgeMeta = abbrKind ? ABBREV_BADGE[abbrKind] : null;
   const [shiftFocused, setShiftFocused] = useState(false);
   const noteRef = useRef<HTMLInputElement>(null);
@@ -292,7 +308,10 @@ function RotaDayCell({
   }
 
   return (
-    <td className={`rota-day-cell-cq relative p-0 align-stretch ${shell}`}>
+    <td
+      className={`rota-day-cell-cq relative p-0 align-stretch ${shell}`}
+      title={employmentHint}
+    >
       <div className="flex h-full min-h-0 flex-col gap-1 p-1 pb-3">
         <div
           className={`relative flex min-w-0 flex-1 items-center justify-center ${noteRowVisible ? "" : "min-h-[4.15rem]"}`}
@@ -1799,6 +1818,14 @@ export function DienstplanWeekView() {
                   const siteHint =
                     r.employee.workSite === "SHARED" ? " · geteilt" : "";
                   const label = `${r.employee.name}${siteHint} (${contractLabelForWeek(cr, data.weekStart)})`;
+                  const exitScope = weekExitScope(
+                    data.weekStart,
+                    r.employee.exitDate ?? null
+                  );
+                  const exitBadge =
+                    r.employee.exitDate && exitScope !== "none"
+                      ? weekExitRowBadge(exitScope, r.employee.exitDate)
+                      : null;
                   const liveH = liveLaborByEmp.get(r.employee.id);
                   const hints =
                     layer === "PLAN"
@@ -1844,20 +1871,38 @@ export function DienstplanWeekView() {
                               </button>
                             </div>
                           ) : null}
-                          <span className="min-w-0 pt-0.5">{label}</span>
+                          <span className="min-w-0 pt-0.5">
+                            {label}
+                            {exitBadge ? (
+                              <span
+                                className={`mt-0.5 block text-[11px] font-bold leading-tight ${exitBadge.className}`}
+                              >
+                                {exitBadge.text}
+                              </span>
+                            ) : null}
+                          </span>
                         </div>
                       </td>
-                      {displayCells.map((val, di) => (
-                        <RotaDayCell
-                          key={di}
-                          dayShort={SHORT_DAYS[di] ?? ""}
-                          readOnly={readOnly}
-                          val={val}
-                          note={displayNotes[di] ?? ""}
-                          onValChange={(v) => setCell(r.employee.id, di, v)}
-                          onNoteChange={(n) => setNote(r.employee.id, di, n)}
-                        />
-                      ))}
+                      {displayCells.map((val, di) => {
+                        const dayISO = data.days[di]?.dateISO ?? "";
+                        const empMark = employmentDayMark(
+                          dayISO,
+                          r.employee.entryDate ?? null,
+                          r.employee.exitDate ?? null
+                        );
+                        return (
+                          <RotaDayCell
+                            key={di}
+                            dayShort={SHORT_DAYS[di] ?? ""}
+                            readOnly={readOnly}
+                            val={val}
+                            note={displayNotes[di] ?? ""}
+                            employmentMark={empMark}
+                            onValChange={(v) => setCell(r.employee.id, di, v)}
+                            onNoteChange={(n) => setNote(r.employee.id, di, n)}
+                          />
+                        );
+                      })}
                       <td className="border-2 border-slate-400 bg-slate-50/80 px-2 py-1.5 text-right text-[15px] font-semibold tabular-nums text-slate-900">
                         {fmt.format(weeklyHoursShown)}
                       </td>
@@ -1943,6 +1988,14 @@ export function DienstplanWeekView() {
                   const siteHint =
                     r.employee.workSite === "SHARED" ? " · geteilt" : "";
                   const printLabel = `${r.employee.name}${siteHint}`;
+                  const printExitScope = weekExitScope(
+                    data.weekStart,
+                    r.employee.exitDate ?? null
+                  );
+                  const printExitBadge =
+                    r.employee.exitDate && printExitScope !== "none"
+                      ? weekExitRowBadge(printExitScope, r.employee.exitDate)
+                      : null;
                   if (layer === "PLAN") {
                     const { plan, planNotes } = planCellsForRow(r, grid);
                     const crP = contractRowsForRow(r);
@@ -1958,9 +2011,26 @@ export function DienstplanWeekView() {
                       <tr key={`print-${r.employee.id}`}>
                         <td className="border-2 border-slate-500 px-1 py-1 align-top text-xs font-semibold">
                           {printLabel}
+                          {printExitBadge ? (
+                            <div
+                              className={`mt-0.5 text-[9px] font-bold ${printExitBadge.className}`}
+                            >
+                              {printExitBadge.text}
+                            </div>
+                          ) : null}
                         </td>
                         {plan.map((cell, di) => (
-                          <td key={di} className={rotaPrintCellClass(cell ?? "")}>
+                          <td
+                            key={di}
+                            className={rotaPrintCellClass(
+                              cell ?? "",
+                              employmentDayMark(
+                                data.days[di]?.dateISO ?? "",
+                                r.employee.entryDate ?? null,
+                                r.employee.exitDate ?? null
+                              )
+                            )}
+                          >
                             <div>{(cell ?? "").trim() || "—"}</div>
                             {(planNotes[di] ?? "").trim() ? (
                               <div className="mt-0.5 text-[9px] font-medium text-slate-700">
@@ -1999,9 +2069,26 @@ export function DienstplanWeekView() {
                     <tr key={`print-${r.employee.id}`}>
                       <td className="border-2 border-slate-500 px-1 py-1 align-top text-xs font-semibold">
                         {printLabel}
+                        {printExitBadge ? (
+                          <div
+                            className={`mt-0.5 text-[9px] font-bold ${printExitBadge.className}`}
+                          >
+                            {printExitBadge.text}
+                          </div>
+                        ) : null}
                       </td>
                       {actual.map((cell, di) => (
-                        <td key={di} className={rotaPrintCellClass(cell ?? "")}>
+                        <td
+                          key={di}
+                          className={rotaPrintCellClass(
+                            cell ?? "",
+                            employmentDayMark(
+                              data.days[di]?.dateISO ?? "",
+                              r.employee.entryDate ?? null,
+                              r.employee.exitDate ?? null
+                            )
+                          )}
+                        >
                           <div>{(cell ?? "").trim() || "—"}</div>
                           {(actualNotes[di] ?? "").trim() ? (
                             <div className="mt-0.5 text-[9px] font-medium text-slate-700">

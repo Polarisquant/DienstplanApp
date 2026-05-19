@@ -211,6 +211,7 @@ export async function GET(req: Request) {
         workDaysPerWeek: cWeek.workDaysPerWeek,
         vacationDaysOpen: e.vacationDaysOpen,
         entryDate: e.entryDate ? e.entryDate.toISOString().slice(0, 10) : null,
+        exitDate: e.exitDate ? e.exitDate.toISOString().slice(0, 10) : null,
       },
       contractRows,
       plan,
