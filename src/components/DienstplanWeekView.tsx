@@ -683,6 +683,37 @@ function emptyGridRow(): GridRow {
   };
 }
 
+function gridFromWeekRows(rows: RowDTO[]): Record<string, GridRow> {
+  const g: Record<string, GridRow> = {};
+  for (const r of rows) {
+    g[r.employee.id] = {
+      plan: [...r.plan],
+      actual: [...r.actual],
+      planNotes: [...(r.planNotes ?? Array(7).fill(""))],
+      actualNotes: [...(r.actualNotes ?? Array(7).fill(""))],
+    };
+  }
+  return g;
+}
+
+function isGridDirty(
+  data: WeekPayload | null,
+  grid: Record<string, GridRow>
+): boolean {
+  if (!data) return false;
+  for (const r of data.rows) {
+    const g = grid[r.employee.id];
+    if (!g) continue;
+    for (let d = 0; d < 7; d++) {
+      if ((g.plan[d] ?? "") !== (r.plan[d] ?? "")) return true;
+      if ((g.actual[d] ?? "") !== (r.actual[d] ?? "")) return true;
+      if ((g.planNotes[d] ?? "") !== (r.planNotes?.[d] ?? "")) return true;
+      if ((g.actualNotes[d] ?? "") !== (r.actualNotes?.[d] ?? "")) return true;
+    }
+  }
+  return false;
+}
+
 function workSiteLabel(s: UiWorkSite): string {
   return s === "CRUSH" ? "Crush" : "CappuCone";
 }
@@ -813,16 +844,7 @@ export function DienstplanWeekView() {
         if (!res.ok) throw new Error("Laden fehlgeschlagen");
         const json: WeekPayload = await res.json();
         setData(json);
-        const g: Record<string, GridRow> = {};
-        for (const r of json.rows) {
-          g[r.employee.id] = {
-            plan: [...r.plan],
-            actual: [...r.actual],
-            planNotes: [...(r.planNotes ?? Array(7).fill(""))],
-            actualNotes: [...(r.actualNotes ?? Array(7).fill(""))],
-          };
-        }
-        setGrid(g);
+        setGrid(gridFromWeekRows(json.rows));
         return json;
       } catch {
         setMsg("Woche konnte nicht geladen werden.");
@@ -1206,6 +1228,17 @@ export function DienstplanWeekView() {
   }
 
   const readOnly = data?.status === "CLOSED";
+
+  const hasUnsavedChanges = useMemo(
+    () => isGridDirty(data, grid),
+    [data, grid]
+  );
+
+  function discardChanges() {
+    if (!data) return;
+    setGrid(gridFromWeekRows(data.rows));
+    setMsg(null);
+  }
 
   function handlePrint() {
     window.print();
@@ -2292,6 +2325,36 @@ export function DienstplanWeekView() {
         </>
       )}
       </div>
+
+      {hasUnsavedChanges && !readOnly && !loading && (
+        <div
+          className="no-print fixed bottom-4 right-4 z-50 flex max-w-sm flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-lg sm:flex-row sm:items-center"
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-sm text-amber-950">
+            Sie haben ungespeicherte Änderungen. Bitte speichern oder verwerfen.
+          </p>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              disabled={saving || importingPrevWeek}
+              onClick={() => void save()}
+              className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-40"
+            >
+              {saving ? "Speichern…" : "Speichern"}
+            </button>
+            <button
+              type="button"
+              disabled={saving || importingPrevWeek}
+              onClick={discardChanges}
+              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            >
+              Verwerfen
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
