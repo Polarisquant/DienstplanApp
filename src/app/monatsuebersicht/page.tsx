@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppNavLinks } from "@/components/AppNavLinks";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type MonthlyReportPayload = {
@@ -255,33 +255,22 @@ export default function MonatsuebersichtPage() {
             Ist-Stunden pro Mitarbeiter und Monat (nach schließbaren Kalenderwochen)
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/dienstplan"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Dienstplan
-          </Link>
-          <Link
-            href="/mitarbeiter"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Mitarbeiter
-          </Link>
-          <Link
-            href="/abrechnung"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Abrechnung
-          </Link>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:underline"
-          >
-            Abmelden
-          </button>
-        </div>
+        <AppNavLinks
+          links={[
+            { href: "/dienstplan", label: "Dienstplan" },
+            { href: "/mitarbeiter", label: "Mitarbeiter" },
+            { href: "/abrechnung", label: "Abrechnung" },
+          ]}
+          after={
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-600 hover:bg-slate-100 md:inline md:w-auto md:p-0 md:hover:underline"
+            >
+              Abmelden
+            </button>
+          }
+        />
       </header>
 
       <div className="no-print mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:flex-wrap md:items-end">
@@ -290,7 +279,7 @@ export default function MonatsuebersichtPage() {
           <select
             value={employeeId}
             onChange={(e) => setEmployeeId(e.target.value)}
-            className="min-w-[14rem] rounded border border-slate-300 px-2 py-1.5"
+            className="mobile-input min-w-0 w-full rounded border border-slate-300 px-2 py-1.5 md:min-w-[14rem]"
           >
             <option value="">— wählen —</option>
             {employees.map((e) => (
@@ -306,7 +295,7 @@ export default function MonatsuebersichtPage() {
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="rounded border border-slate-300 px-2 py-1.5"
+            className="mobile-input rounded border border-slate-300 px-2 py-1.5"
           />
         </label>
         <button
@@ -354,7 +343,10 @@ export default function MonatsuebersichtPage() {
       {loading && !data && <p className="no-print text-slate-500">Lade…</p>}
 
       {data && (
-        <article className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
+        <article className="table-scroll-x table-scroll-hint rounded-xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
+          <p className="no-print px-3 py-2 text-xs text-slate-500 md:hidden">
+            Tabelle horizontal wischen.
+          </p>
           <div className="border-b border-slate-200 p-4 print:p-2">
             <h2 className="text-lg font-semibold text-slate-900 print:text-base">
               Monatsübersicht {data.monthLabel} · {data.employee.name}

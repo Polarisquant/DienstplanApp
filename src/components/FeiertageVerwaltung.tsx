@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppNavLinks } from "@/components/AppNavLinks";
 import { useCallback, useEffect, useState } from "react";
 
 type HolidayRow = {
@@ -153,20 +153,12 @@ export function FeiertageVerwaltung() {
             als die Tage dazwischen.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/dienstplan"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Zum Dienstplan
-          </Link>
-          <Link
-            href="/mitarbeiter"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Mitarbeiter
-          </Link>
-        </div>
+        <AppNavLinks
+          links={[
+            { href: "/dienstplan", label: "Zum Dienstplan" },
+            { href: "/mitarbeiter", label: "Mitarbeiter" },
+          ]}
+        />
       </header>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -175,7 +167,7 @@ export function FeiertageVerwaltung() {
           <select
             value={year}
             onChange={(e) => setYear(Number(e.target.value))}
-            className="ml-1 rounded border border-slate-300 px-2 py-1 text-sm"
+            className="ml-1 rounded border border-slate-300 px-2 py-1.5 mobile-input"
           >
             {YEARS.map((y) => (
               <option key={y} value={y}>
@@ -204,7 +196,10 @@ export function FeiertageVerwaltung() {
               ausführen oder Jahr wechseln.
             </p>
           ) : (
-            <div className="mb-10 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="mb-10 table-scroll-x table-scroll-hint rounded-xl border border-slate-200 bg-white shadow-sm">
+              <p className="px-3 py-2 text-xs text-slate-500 md:hidden">
+                Tabelle horizontal wischen.
+              </p>
               <table className="min-w-[640px] w-full border-collapse text-sm">
                 <thead>
                   <tr className="bg-slate-100 text-left">
@@ -221,14 +216,16 @@ export function FeiertageVerwaltung() {
                       className={r.includedInPlan ? "" : "bg-slate-50 text-slate-500"}
                     >
                       <td className="border border-slate-200 px-2 py-2">
-                        <input
-                          type="checkbox"
-                          checked={r.includedInPlan}
-                          disabled={pending === `h:${r.id}`}
-                          onChange={(e) => void toggleHoliday(r.id, e.target.checked)}
-                          className="h-4 w-4 accent-[var(--rota-header)]"
-                          aria-label={`${r.name} im Plan`}
-                        />
+                        <label className="flex min-h-11 items-center">
+                          <input
+                            type="checkbox"
+                            checked={r.includedInPlan}
+                            disabled={pending === `h:${r.id}`}
+                            onChange={(e) => void toggleHoliday(r.id, e.target.checked)}
+                            className="h-5 w-5 accent-[var(--rota-header)]"
+                            aria-label={`${r.name} im Plan`}
+                          />
+                        </label>
                       </td>
                       <td className="border border-slate-200 px-2 py-2 tabular-nums">
                         {fmtDe(r.date)}
@@ -257,7 +254,10 @@ export function FeiertageVerwaltung() {
               ausführen.
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="table-scroll-x table-scroll-hint rounded-xl border border-slate-200 bg-white shadow-sm">
+              <p className="px-3 py-2 text-xs text-slate-500 md:hidden">
+                Tabelle horizontal wischen.
+              </p>
               <table className="min-w-[720px] w-full border-collapse text-sm">
                 <thead>
                   <tr className="bg-slate-100 text-left">
@@ -275,14 +275,16 @@ export function FeiertageVerwaltung() {
                       className={r.includedInPlan ? "" : "bg-slate-50 text-slate-500"}
                     >
                       <td className="border border-slate-200 px-2 py-2">
-                        <input
-                          type="checkbox"
-                          checked={r.includedInPlan}
-                          disabled={pending === `s:${r.id}`}
-                          onChange={(e) => void toggleBreak(r.id, e.target.checked)}
-                          className="h-4 w-4 accent-[var(--rota-header)]"
-                          aria-label={`${r.name} (${r.region}) im Plan`}
-                        />
+                        <label className="flex min-h-11 items-center">
+                          <input
+                            type="checkbox"
+                            checked={r.includedInPlan}
+                            disabled={pending === `s:${r.id}`}
+                            onChange={(e) => void toggleBreak(r.id, e.target.checked)}
+                            className="h-5 w-5 accent-[var(--rota-header)]"
+                            aria-label={`${r.name} (${r.region}) im Plan`}
+                          />
+                        </label>
                       </td>
                       <td className="border border-slate-200 px-2 py-2 tabular-nums">
                         {fmtDe(r.startDate)}

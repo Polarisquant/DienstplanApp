@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppNavLinks } from "@/components/AppNavLinks";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { annualVacationDaysFromWorkDaysPerWeek } from "@/lib/vacationAccrualAT";
 
@@ -353,32 +353,21 @@ export function MitarbeiterVerwaltung() {
           <h1 className="text-2xl font-semibold text-slate-800">Mitarbeiter</h1>
           <p className="text-sm text-slate-500">Stammdaten für den Dienstplan</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/feiertage"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Feiertage &amp; Ferien
-          </Link>
-          <Link
-            href="/dienstplan"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Zum Dienstplan
-          </Link>
-          <Link
-            href="/monatsuebersicht"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Monatsübersicht
-          </Link>
+        <div className="flex w-full flex-col gap-2 md:w-auto">
+          <AppNavLinks
+            links={[
+              { href: "/feiertage", label: "Feiertage & Ferien" },
+              { href: "/dienstplan", label: "Zum Dienstplan" },
+              { href: "/monatsuebersicht", label: "Monatsübersicht" },
+            ]}
+          />
           <button
             type="button"
             onClick={() => {
               setCreating((c) => !c);
               setEditId(null);
             }}
-            className="rounded-lg bg-[var(--rota-header)] px-3 py-1.5 text-sm font-medium text-white"
+            className="touch-target w-full rounded-lg bg-[var(--rota-header)] px-3 py-2 text-sm font-medium text-white md:w-auto md:py-1.5"
           >
             {creating ? "Abbrechen" : "Neuer Mitarbeiter"}
           </button>
@@ -400,7 +389,7 @@ export function MitarbeiterVerwaltung() {
               required
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             />
           </Field>
           <Field label="Personalnummer">
@@ -409,7 +398,7 @@ export function MitarbeiterVerwaltung() {
               onChange={(e) =>
                 setForm((f) => ({ ...f, personalNumber: e.target.value }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
               placeholder="z. B. 98992"
             />
           </Field>
@@ -418,7 +407,7 @@ export function MitarbeiterVerwaltung() {
               type="date"
               value={form.entryDate}
               onChange={(e) => setForm((f) => ({ ...f, entryDate: e.target.value }))}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             />
           </Field>
           <Field label="Austritt">
@@ -426,7 +415,7 @@ export function MitarbeiterVerwaltung() {
               type="date"
               value={form.exitDate}
               onChange={(e) => setForm((f) => ({ ...f, exitDate: e.target.value }))}
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             />
           </Field>
           <Field label="Standort">
@@ -435,7 +424,7 @@ export function MitarbeiterVerwaltung() {
               onChange={(e) =>
                 setForm((f) => ({ ...f, workSite: e.target.value as WorkSiteVal }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             >
               {SITE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -454,7 +443,7 @@ export function MitarbeiterVerwaltung() {
               onChange={(e) =>
                 setForm((f) => ({ ...f, contractHoursPerWeek: Number(e.target.value) }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             />
           </Field>
           <Field label="Arbeitstage / Woche">
@@ -467,7 +456,7 @@ export function MitarbeiterVerwaltung() {
               onChange={(e) =>
                 setForm((f) => ({ ...f, workDaysPerWeek: Number(e.target.value) }))
               }
-              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
             />
           </Field>
           <Field label="Startsaldo ZAG (Std.)">
@@ -520,7 +509,10 @@ export function MitarbeiterVerwaltung() {
       {loading ? (
         <p className="text-slate-500">Lade…</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="table-scroll-x table-scroll-hint rounded-xl border border-slate-200 bg-white shadow-sm">
+          <p className="px-3 py-2 text-xs text-slate-500 md:hidden">
+            Tabelle horizontal wischen.
+          </p>
           <table className="min-w-[800px] w-full border-collapse text-sm">
             <thead>
               <tr className="bg-slate-100 text-left">
@@ -566,22 +558,19 @@ export function MitarbeiterVerwaltung() {
                       {emp.active ? "Ja" : "Nein"}
                     </td>
                     <td className="border border-slate-200 px-2 py-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <div className="flex flex-col gap-1 md:flex-row md:flex-wrap md:items-center md:gap-x-2 md:gap-y-1">
                         <button
                           type="button"
                           onClick={() => startEdit(emp)}
-                          className="text-[var(--rota-header)] hover:underline"
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-sm text-[var(--rota-header)] hover:bg-slate-50 md:border-0 md:p-0 md:hover:underline"
                         >
                           Bearbeiten
                         </button>
-                        <span className="text-slate-300 select-none" aria-hidden>
-                          |
-                        </span>
                         {emp.active ? (
                           <button
                             type="button"
                             onClick={() => void deactivate(emp.id)}
-                            className="text-red-600 hover:underline"
+                            className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-sm text-red-600 hover:bg-red-50 md:border-0 md:p-0 md:hover:underline"
                           >
                             Deaktivieren
                           </button>
@@ -589,19 +578,16 @@ export function MitarbeiterVerwaltung() {
                           <button
                             type="button"
                             onClick={() => void reactivate(emp.id)}
-                            className="text-green-700 hover:underline"
+                            className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-sm text-green-700 hover:bg-green-50 md:border-0 md:p-0 md:hover:underline"
                           >
                             Aktivieren
                           </button>
                         )}
-                        <span className="text-slate-300 select-none" aria-hidden>
-                          |
-                        </span>
                         <button
                           type="button"
                           disabled={employeeDeletingId === emp.id}
                           onClick={() => void deleteEmployeePermanent(emp.id, emp.name)}
-                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-[15px] font-light leading-none text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-40"
+                          className="touch-target inline-flex shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-lg font-light leading-none text-red-600 hover:border-red-200 hover:bg-red-50 disabled:opacity-40 md:h-6 md:w-6 md:text-[15px]"
                           title="Endgültig löschen"
                           aria-label={`${emp.name} endgültig löschen`}
                         >
@@ -612,7 +598,7 @@ export function MitarbeiterVerwaltung() {
                   </tr>
                   {editId === emp.id && (
                     <tr>
-                      <td colSpan={9} className="border border-slate-200 bg-amber-50/50 p-4">
+                      <td colSpan={10} className="border border-slate-200 bg-amber-50/50 p-4">
                         <form
                           onSubmit={saveEdit}
                           className="grid gap-3 md:grid-cols-2 lg:grid-cols-3"
@@ -624,7 +610,7 @@ export function MitarbeiterVerwaltung() {
                               onChange={(e) =>
                                 setEditForm((f) => ({ ...f, name: e.target.value }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           <Field label="Personalnummer">
@@ -636,7 +622,7 @@ export function MitarbeiterVerwaltung() {
                                   personalNumber: e.target.value,
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           <Field label="Eintritt">
@@ -646,7 +632,7 @@ export function MitarbeiterVerwaltung() {
                               onChange={(e) =>
                                 setEditForm((f) => ({ ...f, entryDate: e.target.value }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           <Field label="Austritt">
@@ -656,7 +642,7 @@ export function MitarbeiterVerwaltung() {
                               onChange={(e) =>
                                 setEditForm((f) => ({ ...f, exitDate: e.target.value }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           <Field label="Standort">
@@ -668,7 +654,7 @@ export function MitarbeiterVerwaltung() {
                                   workSite: e.target.value as WorkSiteVal,
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             >
                               {SITE_OPTIONS.map((o) => (
                                 <option key={o.value} value={o.value}>
@@ -689,7 +675,7 @@ export function MitarbeiterVerwaltung() {
                                   contractHoursPerWeek: Number(e.target.value),
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           <Field label="Arbeitstage / Woche">
@@ -704,7 +690,7 @@ export function MitarbeiterVerwaltung() {
                                   workDaysPerWeek: Number(e.target.value),
                                 }))
                               }
-                              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                              className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                             />
                           </Field>
                           {emp.contracts && emp.contracts.length > 0 && (
@@ -767,7 +753,7 @@ export function MitarbeiterVerwaltung() {
                                       contractChangeFrom: e.target.value,
                                     }))
                                   }
-                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                                 />
                               </Field>
                               <Field label="Neu: Std./Woche">
@@ -782,7 +768,7 @@ export function MitarbeiterVerwaltung() {
                                       contractChangeHours: Number(e.target.value),
                                     }))
                                   }
-                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                                 />
                               </Field>
                               <Field label="Neu: Tage/Woche">
@@ -797,7 +783,7 @@ export function MitarbeiterVerwaltung() {
                                       contractChangeDays: Number(e.target.value),
                                     }))
                                   }
-                                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                                  className="w-full rounded border border-slate-300 px-2 py-1.5 mobile-input"
                                 />
                               </Field>
                             </div>

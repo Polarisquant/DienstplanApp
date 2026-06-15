@@ -47,7 +47,7 @@ export default function LoginPage() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none ring-rota-header focus:ring-2"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 mobile-input outline-none ring-rota-header focus:ring-2"
             />
           </div>
           {error && (

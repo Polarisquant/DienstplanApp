@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { AppNavLinks } from "@/components/AppNavLinks";
 import { useCallback, useEffect, useState } from "react";
 
 type Row = {
@@ -172,27 +172,21 @@ export default function AbrechnungPage() {
             Stunden & Urlaub im Zeitraum — kein offizieller Lohnzettel
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/dienstplan"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Dienstplan
-          </Link>
-          <Link
-            href="/mitarbeiter"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Mitarbeiter
-          </Link>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:underline"
-          >
-            Abmelden
-          </button>
-        </div>
+        <AppNavLinks
+          links={[
+            { href: "/dienstplan", label: "Dienstplan" },
+            { href: "/mitarbeiter", label: "Mitarbeiter" },
+          ]}
+          after={
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-600 hover:bg-slate-100 md:inline md:w-auto md:p-0 md:hover:underline"
+            >
+              Abmelden
+            </button>
+          }
+        />
       </header>
 
       <div className="no-print mb-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:flex-wrap md:items-end">
@@ -205,7 +199,7 @@ export default function AbrechnungPage() {
               setMonth(e.target.value);
               setUseCustom(false);
             }}
-            className="rounded border border-slate-300 px-2 py-1.5"
+            className="mobile-input rounded border border-slate-300 px-2 py-1.5"
           />
         </label>
         <span className="text-slate-400 md:self-center">oder</span>
@@ -218,7 +212,7 @@ export default function AbrechnungPage() {
               setFrom(e.target.value);
               setUseCustom(true);
             }}
-            className="rounded border border-slate-300 px-2 py-1.5"
+            className="mobile-input rounded border border-slate-300 px-2 py-1.5"
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -230,7 +224,7 @@ export default function AbrechnungPage() {
               setTo(e.target.value);
               setUseCustom(true);
             }}
-            className="rounded border border-slate-300 px-2 py-1.5"
+            className="mobile-input rounded border border-slate-300 px-2 py-1.5"
           />
         </label>
         <button
@@ -285,12 +279,15 @@ export default function AbrechnungPage() {
       {loading && !data ? (
         <p className="text-slate-500">Lade…</p>
       ) : data ? (
-        <article className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
+        <article className="table-scroll-x table-scroll-hint rounded-xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
+          <p className="no-print px-3 py-2 text-xs text-slate-500 md:hidden">
+            Tabelle horizontal wischen.
+          </p>
           <h2 className="mb-2 hidden text-lg font-semibold print:block">
             Abrechnungsübersicht · {data.from} — {data.to}
           </h2>
-          <p className="mb-3 text-xs text-slate-600 print:text-[10px]">{data.disclaimer}</p>
-          <table className="min-w-[800px] w-full border-collapse text-sm print:text-xs">
+          <p className="mb-3 px-3 text-xs text-slate-600 print:px-0 print:text-[10px]">{data.disclaimer}</p>
+          <table className="min-w-[800px] w-full border-collapse text-sm print:min-w-0 print:text-xs">
             <thead>
               <tr className="bg-slate-100 text-left print:bg-white">
                 <th className="border border-slate-200 px-2 py-2">Mitarbeiter</th>

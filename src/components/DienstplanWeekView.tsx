@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -35,6 +34,7 @@ import {
   type ShiftAbbrevUiKind,
 } from "@/lib/parseShiftCell";
 import { WeekWeatherSkeleton, WeekWeatherStrip } from "@/components/WeekWeatherStrip";
+import { AppNavLinks } from "@/components/AppNavLinks";
 
 type Layer = "PLAN" | "ACTUAL";
 type UiWorkSite = "CRUSH" | "CAPPUCONE";
@@ -397,7 +397,7 @@ function RotaDayCell({
             value={note ?? ""}
             onChange={(e) => onNoteChange(e.target.value)}
             onBlur={onNoteBlur}
-            className={`h-7 w-full min-w-[6.5rem] shrink-0 rounded-md border-2 border-dashed px-2 text-[12px] font-medium outline-none focus:ring-2 focus:ring-inset ${focusRingClass} disabled:bg-slate-200/80 ${
+            className={`h-7 w-full min-w-[6.5rem] shrink-0 rounded-md border-2 border-dashed px-2 mobile-note-input text-[12px] font-medium outline-none focus:ring-2 focus:ring-inset ${focusRingClass} disabled:bg-slate-200/80 ${
               isExitDay
                 ? "border-red-300/70 bg-red-50/50 text-slate-800"
                 : "border-slate-400 bg-slate-100/90 text-slate-800"
@@ -412,7 +412,7 @@ function RotaDayCell({
         <button
           type="button"
           onClick={openNoteRow}
-          className="absolute bottom-px right-px z-20 flex h-3.5 min-w-[0.85rem] items-center justify-center rounded px-[1px] text-[9px] font-semibold leading-none text-slate-400 hover:bg-slate-200/70 hover:text-slate-600"
+          className="absolute bottom-0 right-0 z-20 flex h-8 w-8 items-center justify-center rounded-tl-md text-sm font-semibold text-slate-500 hover:bg-slate-200/70 hover:text-slate-700"
           aria-label="Notiz hinzufügen"
           title="Notiz hinzufügen"
         >
@@ -1491,7 +1491,7 @@ export function DienstplanWeekView() {
 
   return (
     <div className={`${shellBg} print:bg-white`}>
-      <div className="p-4 md:p-6 print:p-4">
+      <div className={`p-4 md:p-6 print:p-4 ${hasUnsavedChanges && !readOnly ? "pb-28 md:pb-6" : ""}`}>
       <header className="no-print mb-6 flex flex-col gap-4 border-b border-slate-200/80 pb-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-800">Dienstplan</h1>
@@ -1541,7 +1541,62 @@ export function DienstplanWeekView() {
             </button>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-col gap-2 md:hidden">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setWeekStart((s) => addDaysISO(s, -7))}
+              className="touch-target flex-1 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-50"
+            >
+              ‹ Vorherige
+            </button>
+            <button
+              type="button"
+              onClick={() => setWeekStart(defaultWeekStartISO())}
+              className="touch-target shrink-0 rounded-lg border border-slate-300 bg-white px-3 text-sm hover:bg-slate-50"
+              title="Aktuelle Woche"
+            >
+              Heute
+            </button>
+            <button
+              type="button"
+              onClick={() => setWeekStart((s) => addDaysISO(s, 7))}
+              className="touch-target flex-1 rounded-lg border border-slate-300 bg-white text-sm font-medium hover:bg-slate-50"
+            >
+              Nächste ›
+            </button>
+          </div>
+          <label className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+            <span className="shrink-0 text-slate-600">Gehe zu</span>
+            <input
+              type="date"
+              className="mobile-input min-w-0 flex-1 rounded border border-slate-200 px-2 py-1 text-slate-800"
+              value={weekStart}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) setWeekStart(weekStartISOContainingDate(v));
+              }}
+            />
+          </label>
+          <AppNavLinks
+            links={[
+              { href: "/feiertage", label: "Feiertage & Ferien" },
+              { href: "/mitarbeiter", label: "Mitarbeiter" },
+              { href: "/abrechnung", label: "Abrechnung" },
+              { href: "/monatsuebersicht", label: "Monatsübersicht" },
+            ]}
+            after={
+              <button
+                type="button"
+                onClick={() => void logout()}
+                className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-slate-600 hover:bg-slate-100"
+              >
+                Abmelden
+              </button>
+            }
+          />
+        </div>
+        <div className="hidden flex-wrap items-center gap-2 md:flex">
           <button
             type="button"
             onClick={() => setWeekStart((s) => addDaysISO(s, -7))}
@@ -1567,7 +1622,7 @@ export function DienstplanWeekView() {
             <span className="text-slate-600">Gehe zu</span>
             <input
               type="date"
-              className="w-[10.5rem] rounded border border-slate-200 bg-white px-1.5 py-0.5 text-sm text-slate-800"
+              className="mobile-input w-[10.5rem] rounded border border-slate-200 bg-white px-1.5 py-0.5 text-slate-800"
               value={weekStart}
               onChange={(e) => {
                 const v = e.target.value;
@@ -1576,37 +1631,23 @@ export function DienstplanWeekView() {
               title="Beliebiges Datum in der Zielwoche wählen — es wird der Montag dieser Woche geladen"
             />
           </label>
-          <Link
-            href="/feiertage"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Feiertage &amp; Ferien
-          </Link>
-          <Link
-            href="/mitarbeiter"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Mitarbeiter
-          </Link>
-          <Link
-            href="/abrechnung"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Abrechnung
-          </Link>
-          <Link
-            href="/monatsuebersicht"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-          >
-            Monatsübersicht
-          </Link>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:underline"
-          >
-            Abmelden
-          </button>
+          <AppNavLinks
+            links={[
+              { href: "/feiertage", label: "Feiertage & Ferien" },
+              { href: "/mitarbeiter", label: "Mitarbeiter" },
+              { href: "/abrechnung", label: "Abrechnung" },
+              { href: "/monatsuebersicht", label: "Monatsübersicht" },
+            ]}
+            after={
+              <button
+                type="button"
+                onClick={() => void logout()}
+                className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:underline"
+              >
+                Abmelden
+              </button>
+            }
+          />
         </div>
       </header>
 
@@ -1639,7 +1680,7 @@ export function DienstplanWeekView() {
         <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-sky-200/80 bg-white/90 px-2.5 py-1.5 text-sm text-slate-600 shadow-sm">
           <input
             type="checkbox"
-            className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+            className="h-5 w-5 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
             checked={showWeather}
             onChange={(e) => setShowWeather(e.target.checked)}
           />
@@ -1647,33 +1688,66 @@ export function DienstplanWeekView() {
         </label>
         {data && data.status !== "CLOSED" && (
           <>
-            <button
-              type="button"
-              disabled={saving || loading || importingPrevWeek}
-              onClick={() => copyPlanToActual()}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
-              title="Alle Plan-Zellen und Notizen in die Ist-Zeilen kopieren"
-            >
-              Soll → Ist übernehmen
-            </button>
-            <button
-              type="button"
-              disabled={saving || loading || importingPrevWeek}
-              onClick={() => void copyPreviousWeek()}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
-              title="Plan, Ist und Notizen der Kalenderwoche davor in diese Woche kopieren"
-            >
-              Vorwoche übernehmen
-            </button>
-            <button
-              type="button"
-              disabled={saving || loading || importingPrevWeek}
-              onClick={() => clearCurrentWeek()}
-              className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 shadow-sm hover:bg-red-50 disabled:opacity-40"
-              title="Alle Einträge und Notizen dieser Woche leeren"
-            >
-              Woche leeren
-            </button>
+            <details className="w-full md:hidden">
+              <summary className="touch-target flex w-full cursor-pointer list-none items-center justify-center rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 [&::-webkit-details-marker]:hidden">
+                Wochen-Aktionen
+              </summary>
+              <div className="mt-2 flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={saving || loading || importingPrevWeek}
+                  onClick={() => copyPlanToActual()}
+                  className="rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Soll → Ist übernehmen
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || loading || importingPrevWeek}
+                  onClick={() => void copyPreviousWeek()}
+                  className="rounded-lg border border-slate-400 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Vorwoche übernehmen
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || loading || importingPrevWeek}
+                  onClick={() => clearCurrentWeek()}
+                  className="rounded-lg border border-red-300 bg-white px-3 py-2.5 text-sm font-medium text-red-800 shadow-sm hover:bg-red-50 disabled:opacity-40"
+                >
+                  Woche leeren
+                </button>
+              </div>
+            </details>
+            <div className="hidden flex-wrap items-center gap-2 md:flex">
+              <button
+                type="button"
+                disabled={saving || loading || importingPrevWeek}
+                onClick={() => copyPlanToActual()}
+                className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                title="Alle Plan-Zellen und Notizen in die Ist-Zeilen kopieren"
+              >
+                Soll → Ist übernehmen
+              </button>
+              <button
+                type="button"
+                disabled={saving || loading || importingPrevWeek}
+                onClick={() => void copyPreviousWeek()}
+                className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50 disabled:opacity-40"
+                title="Plan, Ist und Notizen der Kalenderwoche davor in diese Woche kopieren"
+              >
+                Vorwoche übernehmen
+              </button>
+              <button
+                type="button"
+                disabled={saving || loading || importingPrevWeek}
+                onClick={() => clearCurrentWeek()}
+                className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 shadow-sm hover:bg-red-50 disabled:opacity-40"
+                title="Alle Einträge und Notizen dieser Woche leeren"
+              >
+                Woche leeren
+              </button>
+            </div>
           </>
         )}
         {data && (
@@ -1724,7 +1798,7 @@ export function DienstplanWeekView() {
             <button
               type="button"
               onClick={() => handlePrint()}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 md:py-1.5"
               title="Druckdialog (dort „Als PDF speichern“) — Inhalt wie Plan/Ist-Umschalter"
             >
               PDF / Druck
@@ -1732,7 +1806,7 @@ export function DienstplanWeekView() {
             <button
               type="button"
               onClick={() => downloadLayerCsv()}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 md:py-1.5"
               title="Semikolon-CSV — Spalten wie aktuelle Plan- oder Ist-Ansicht"
             >
               CSV exportieren
@@ -1740,12 +1814,12 @@ export function DienstplanWeekView() {
             <button
               type="button"
               onClick={() => openLayerEmailDraft()}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 md:py-1.5"
               title="Standard-Mailprogramm mit Entwurf"
             >
               E-Mail (Entwurf)
             </button>
-            <span className="text-xs text-slate-500">
+            <span className="hidden text-xs text-slate-500 md:inline">
               Gilt für die aktuelle Ansicht <strong>Plan</strong> oder <strong>Ist</strong> (Umschalter).
               Steuerung wird beim Druck ausgeblendet.
             </span>
@@ -1784,14 +1858,17 @@ export function DienstplanWeekView() {
             </div>
           )}
 
+          <p className="no-print mb-2 text-xs text-slate-500 md:hidden">
+            Tabelle horizontal wischen — Name bleibt links sichtbar.
+          </p>
           <div
             ref={rotaTableWrapRef}
-            className="no-print overflow-x-auto rounded-xl border-2 border-[var(--rota-border)] bg-white shadow-md"
+            className="no-print table-scroll-x table-scroll-hint rounded-xl border-2 border-[var(--rota-border)] bg-white shadow-md"
           >
             <table className="min-w-[980px] w-full border-collapse text-[15px]">
-              <thead>
+              <thead className="rota-sticky-head">
                 <tr className="bg-[var(--rota-header)] text-white">
-                  <th className="border-2 border-white/35 px-2 py-2.5 text-left text-base font-bold tracking-tight">
+                  <th className="rota-sticky-corner border-2 border-white/35 bg-[var(--rota-header)] px-2 py-2.5 text-left text-base font-bold tracking-tight">
                     Mitarbeiter
                   </th>
                   {data.days.map((d, i) => (
@@ -1929,14 +2006,14 @@ export function DienstplanWeekView() {
                   return (
                     <tr key={r.employee.id} className="border-b-2 border-slate-400 align-top">
                       <td
-                        className={`border-2 border-slate-400 bg-[var(--rota-rail)] px-1.5 py-1.5 text-[15px] font-semibold text-slate-900 ${weekExitScopeRowClasses(exitScope)}`}
+                        className={`rota-sticky-col border-2 border-slate-400 bg-[var(--rota-rail)] px-1.5 py-1.5 text-[15px] font-semibold text-slate-900 ${weekExitScopeRowClasses(exitScope)}`}
                       >
                         <div className="flex items-start gap-1.5">
                           {!readOnly ? (
-                            <div className="no-print flex shrink-0 flex-col gap-0 border-r border-slate-200/80 pr-1">
+                            <div className="no-print flex shrink-0 flex-col gap-0.5 border-r border-slate-200/80 pr-1">
                               <button
                                 type="button"
-                                className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
+                                className="touch-target rounded text-sm leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
                                 disabled={reorderDisabled || fullIndex <= 0}
                                 aria-label="Zeile nach oben"
                                 title="Nach oben"
@@ -1946,7 +2023,7 @@ export function DienstplanWeekView() {
                               </button>
                               <button
                                 type="button"
-                                className="rounded px-0.5 text-xs leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
+                                className="touch-target rounded text-sm leading-none text-slate-500 hover:bg-slate-200/80 hover:text-slate-900 disabled:opacity-30"
                                 disabled={
                                   reorderDisabled ||
                                   fullIndex < 0 ||
@@ -2268,7 +2345,11 @@ export function DienstplanWeekView() {
             )}
           </div>
 
-          <div className="no-print mt-4 rounded-lg border-2 border-slate-400 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-800 shadow-sm">
+          <details className="mobile-help no-print mt-4 rounded-lg border-2 border-slate-400 bg-slate-50 shadow-sm" open>
+            <summary className="cursor-pointer px-3 py-2 text-sm font-bold text-slate-700">
+              Hilfe &amp; Legende
+            </summary>
+            <div className="px-3 pb-2 text-xs font-medium text-slate-800">
             <p className="font-bold text-slate-700">Farben &amp; Zeichen in den Schichtzellen</p>
             <ul className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1">
               <li className="inline-flex items-center gap-2">
@@ -2300,35 +2381,36 @@ export function DienstplanWeekView() {
               Zeit-Eingaben bleiben neutral (weiß); Mehrfachblöcke mit <code>|</code> ohne einheitliches Kürzel
               werden nicht eingefärbt. Kürzel bearbeiten: Zelle fokussieren — dann erscheint der Text wieder.
             </p>
-          </div>
 
-          <p className="no-print mt-4 text-xs font-medium text-slate-600">
-            Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
-            <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
-            <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
-            Stunden); <code>ZA</code>; <code>FT</code> an einem im Kalender markierten{" "}
-            <strong>gesetzlichen Feiertag</strong> = Soll-Tag wie U (Feiertagsentgelt), sonst 0 h.{" "}
-            <strong>WS</strong> =
-            Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> in der Plan-Ansicht =
-            Vorschau (Saldo vor der Woche + Plan-Summe − Vertragssoll); in der Ist-Ansicht wie
-            Zeitkonto (mit Ist-Summe). <strong>o. U.</strong> = Vorschau inkl. geplantem Urlaub
-            dieser Woche (Ist zählt, wenn die Zelle nicht leer ist). Feiertage &amp; Ferien unter{" "}
-            <strong>Feiertage &amp; Ferien</strong>. <strong>Notiz</strong> nur bei Bedarf:{" "}
-            kleines <strong>+</strong> unten rechts in der Zelle, oder bereits gespeicherte Notiz — sonst volle Höhe
-            für die Zeit.{" "}
-            <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
-            <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
-            Notizen (Mitarbeiter ohne Daten in der Vorwoche: leere Zeilen).{" "}
-            <strong>Woche leeren</strong> setzt alles auf leer. Immer danach{" "}
-            <strong>Speichern</strong>.
-          </p>
+            <p className="mt-4 text-xs font-medium text-slate-600">
+              Eingabe: <code>11:30-20:00-30</code> — dritter Wert = Pausenminuten;{" "}
+              <strong>Arbeitszeit = Zeitspanne minus Pause</strong>. Oder{" "}
+              <code>U</code>, <code>K</code> (ganzer Soll-Tag) oder <code>U(2)</code>, <code>K(4)</code> (nur diese
+              Stunden); <code>ZA</code>; <code>FT</code> an einem im Kalender markierten{" "}
+              <strong>gesetzlichen Feiertag</strong> = Soll-Tag wie U (Feiertagsentgelt), sonst 0 h.{" "}
+              <strong>WS</strong> =
+              Summe Stunden (Plan/Ist je nach Ansicht). <strong>ZAG</strong> in der Plan-Ansicht =
+              Vorschau (Saldo vor der Woche + Plan-Summe − Vertragssoll); in der Ist-Ansicht wie
+              Zeitkonto (mit Ist-Summe). <strong>o. U.</strong> = Vorschau inkl. geplantem Urlaub
+              dieser Woche (Ist zählt, wenn die Zelle nicht leer ist). Feiertage &amp; Ferien unter{" "}
+              <strong>Feiertage &amp; Ferien</strong>. <strong>Notiz</strong> nur bei Bedarf:{" "}
+              kleines <strong>+</strong> unten rechts in der Zelle, oder bereits gespeicherte Notiz — sonst volle Höhe
+              für die Zeit.{" "}
+              <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
+              <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
+              Notizen (Mitarbeiter ohne Daten in der Vorwoche: leere Zeilen).{" "}
+              <strong>Woche leeren</strong> setzt alles auf leer. Immer danach{" "}
+              <strong>Speichern</strong>.
+            </p>
+            </div>
+          </details>
         </>
       )}
       </div>
 
       {hasUnsavedChanges && !readOnly && !loading && (
         <div
-          className="no-print fixed bottom-4 right-4 z-50 flex max-w-sm flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-lg sm:flex-row sm:items-center"
+          className="no-print fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-lg md:inset-x-auto md:right-4 md:max-w-sm md:flex-row md:items-center"
           role="status"
           aria-live="polite"
         >
@@ -2340,7 +2422,7 @@ export function DienstplanWeekView() {
               type="button"
               disabled={saving || importingPrevWeek}
               onClick={() => void save()}
-              className="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-40"
+              className="touch-target flex-1 rounded-lg bg-slate-800 px-4 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
             >
               {saving ? "Speichern…" : "Speichern"}
             </button>
@@ -2348,7 +2430,7 @@ export function DienstplanWeekView() {
               type="button"
               disabled={saving || importingPrevWeek}
               onClick={discardChanges}
-              className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+              className="touch-target flex-1 rounded-lg border border-slate-400 bg-white px-4 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
             >
               Verwerfen
             </button>
