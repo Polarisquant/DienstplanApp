@@ -191,6 +191,34 @@ export function parseShiftCellTotalHours(
   return total;
 }
 
+/**
+ * Wie `parseShiftCellTotalHours`, aber mit Fehler-Rückgabe: schlägt ein Segment
+ * fehl, ist die ganze Zelle fehlerhaft (statt still 0 zu zählen).
+ */
+export function parseShiftCellTotalHoursChecked(
+  raw: string,
+  contractHours: number,
+  workDays: number,
+  options?: ParseShiftCellOptions
+): ParseResult {
+  const s = raw.replace(/\s+/g, " ").trim();
+  if (!s) return { ok: true, hours: 0, kind: "empty" };
+  if (!s.includes("|")) {
+    return parseShiftCell(s, contractHours, workDays, options);
+  }
+  const segs = s
+    .split("|")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  let total = 0;
+  for (const seg of segs) {
+    const r = parseShiftCell(seg, contractHours, workDays, options);
+    if (!r.ok) return { ok: false, error: `Block „${seg}“: ${r.error}` };
+    total += r.hours;
+  }
+  return { ok: true, hours: total, kind: "time" };
+}
+
 /** Summe Pausen-Minuten aus allen Zeit-Segmenten (dritter `-`-Teil pro Segment). */
 export function pauseMinutesFromRaw(raw: string): number {
   const s = raw.replace(/\s+/g, " ").trim();
@@ -227,26 +255,68 @@ export function sumParsedWeekHours(
   return { hours: total, errors };
 }
 
-/** Pro Kalendertag der Vertrag, der an diesem Tag gilt (Wechsel mitten in der Woche möglich). */
+/** Eintritt/Austritt für die Wochensumme (ISO yyyy-mm-dd, wie EmploymentBounds). */
+export type SumEmploymentBounds = {
+  entryDateISO: string | null;
+  exitDateISO: string | null;
+};
+
+function isWithinEmployment(
+  dateISO: string,
+  employment?: SumEmploymentBounds
+): boolean {
+  const entry = employment?.entryDateISO?.slice(0, 10) ?? null;
+  const exit = employment?.exitDateISO?.slice(0, 10) ?? null;
+  if (entry && dateISO < entry) return false;
+  if (exit && dateISO > exit) return false;
+  return true;
+}
+
+/**
+ * Wochensumme, pro Kalendertag mit dem an diesem Tag gültigen Vertrag.
+ * - Mehrfachschichten mit `|` werden addiert; fehlerhafte Blöcke sind Fehler (nicht still 0).
+ * - Tage außerhalb des Beschäftigungszeitraums zählen nicht (Eintrag dort = Fehler).
+ * - U/K/F-Kürzel am **Sonntag** zählen 0 h (Betrieb geschlossen, kein Tagessoll) —
+ *   echte Zeit-Einträge am Sonntag zählen weiterhin.
+ */
 export function sumParsedWeekHoursWithContracts(
   cells: string[],
   weekStartISO: string,
   contractRows: ContractRow[],
   /** Kalendertage (YYYY-MM-DD) mit mindestens einem gesetzlichen Feiertag (nicht Schulferien). */
-  publicHolidayDates?: ReadonlySet<string>
+  publicHolidayDates?: ReadonlySet<string>,
+  employment?: SumEmploymentBounds
 ): { hours: number; errors: string[] } {
   const errors: string[] = [];
   let total = 0;
   for (let i = 0; i < 7; i++) {
     const dateISO = addDaysISO(weekStartISO, i);
+    const raw = cells[i] ?? "";
+    const trimmed = raw.replace(/\s+/g, " ").trim();
+    if (!trimmed) continue;
+
+    if (!isWithinEmployment(dateISO, employment)) {
+      errors.push(
+        `Tag ${i + 1} (${dateISO}): Eintrag außerhalb des Beschäftigungszeitraums — zählt nicht.`
+      );
+      continue;
+    }
+
     const c = contractForDate(contractRows, dateISO);
     const treatFt =
       publicHolidayDates != null && publicHolidayDates.has(dateISO);
-    const r = parseShiftCell(cells[i] ?? "", c.contractHoursPerWeek, c.workDaysPerWeek, {
-      treatFtAsPaidHoliday: treatFt,
-    });
-    if (!r.ok) errors.push(`Tag ${i + 1}: ${r.error}`);
-    else total += r.hours;
+    const r = parseShiftCellTotalHoursChecked(
+      raw,
+      c.contractHoursPerWeek,
+      c.workDaysPerWeek,
+      { treatFtAsPaidHoliday: treatFt }
+    );
+    if (!r.ok) {
+      errors.push(`Tag ${i + 1}: ${r.error}`);
+      continue;
+    }
+    const isSundayAbbrev = i === 6 && shiftAbbrevUiKind(raw) !== null;
+    if (!isSundayAbbrev) total += r.hours;
   }
   return { hours: total, errors };
 }

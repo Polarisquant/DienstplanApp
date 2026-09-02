@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { EmployeeSite, ShiftLayer, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { parseShiftCell } from "@/lib/parseShiftCell";
-import { vacationDayUnitsForDayPlanActual } from "@/lib/vacation";
+import { parseShiftCellTotalHoursChecked, shiftAbbrevUiKind } from "@/lib/parseShiftCell";
+import { vacationDayUnitsForDate } from "@/lib/vacation";
+import { employmentBoundsFromDates, isEmployedCalendarDay } from "@/lib/employmentWeekTarget";
 import { contractForDate } from "@/lib/employeeContract";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
 import {
@@ -160,6 +161,24 @@ export async function GET(req: Request) {
       let vacationDays = 0;
       const parseErrors: string[] = [];
       const rowsC = contractMapPayroll.get(e.id) ?? [];
+      const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
+
+      // Wochenweise Ist-Priorität: hat die Ist-Zeile einer (Woche, Standort)
+      // Inhalt, gilt für Urlaub nur sie — sonst der Plan.
+      const istRowContent = new Map<string, boolean>();
+      const istHas = (wid: string): boolean => {
+        const cached = istRowContent.get(wid);
+        if (cached !== undefined) return cached;
+        let has = false;
+        for (let i = 0; i < 7; i++) {
+          if ((actualLookup.get(`${wid}|${e.id}|${i}`) ?? "").trim() !== "") {
+            has = true;
+            break;
+          }
+        }
+        istRowContent.set(wid, has);
+        return has;
+      };
 
       for (const day of days) {
         const ws = weekStartISOContainingDate(day);
@@ -172,40 +191,41 @@ export async function GET(req: Request) {
           pair?.cappucone
         );
         if (wids.length === 0) continue;
+        if (
+          !isEmployedCalendarDay(
+            day,
+            employment.entryDateISO,
+            employment.exitDateISO
+          )
+        ) {
+          continue;
+        }
 
         const cDay = contractForDate(rowsC, day);
-        let dayVacationUnits = 0;
-        let dayHours = 0;
         for (const wid of wids) {
           const key = `${wid}|${e.id}|${di}`;
           const planRaw = planLookup.get(key) ?? "";
           const actualRaw = actualLookup.get(key) ?? "";
-          const vu = vacationDayUnitsForDayPlanActual(
-            planRaw,
-            actualRaw,
-            cDay.contractHoursPerWeek,
-            cDay.workDaysPerWeek
-          );
+          const vacRaw = istHas(wid) ? actualRaw : planRaw;
+          const vu = vacationDayUnitsForDate(vacRaw, day, di, rowsC, employment);
           if (vu > 0) {
-            dayVacationUnits = vu;
-            break;
+            vacationDays += vu;
+            continue;
           }
-          const r = parseShiftCell(
+          if (!actualRaw.trim()) continue;
+          const r = parseShiftCellTotalHoursChecked(
             actualRaw,
             cDay.contractHoursPerWeek,
             cDay.workDaysPerWeek,
-            {
-              treatFtAsPaidHoliday: holidayDateSetPayroll.has(day),
-            }
+            { treatFtAsPaidHoliday: holidayDateSetPayroll.has(day) }
           );
           if (!r.ok) {
-            if (actualRaw.trim()) parseErrors.push(`${day}: ${r.error}`);
+            parseErrors.push(`${day}: ${r.error}`);
             continue;
           }
-          dayHours += r.hours;
+          const isSundayAbbrev = di === 6 && shiftAbbrevUiKind(actualRaw) !== null;
+          if (!isSundayAbbrev) istHours += r.hours;
         }
-        if (dayVacationUnits > 0) vacationDays += dayVacationUnits;
-        else istHours += dayHours;
       }
 
       const { balance, explanation } = await getBalanceAtPeriodEnd(e.id, toISO);

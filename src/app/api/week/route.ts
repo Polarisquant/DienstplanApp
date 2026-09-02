@@ -23,6 +23,10 @@ import {
   normalizePlaceholderContractsAll,
 } from "@/lib/employeeContractLoad";
 import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
+import {
+  employeeVisibleInWeek,
+  employmentBoundsFromDates,
+} from "@/lib/employmentWeekTarget";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
 import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
 import {
@@ -181,9 +185,18 @@ export async function GET(req: Request) {
 
   const contractMap = await contractRowsMapForEmployees(employees.map((e) => e.id));
 
-  const rows = employees.map((e) => {
+  const visibleEmployees = employees.filter((e) =>
+    employeeVisibleInWeek(
+      weekStartStr,
+      e.entryDate ? e.entryDate.toISOString().slice(0, 10) : null,
+      e.exitDate ? e.exitDate.toISOString().slice(0, 10) : null
+    )
+  );
+
+  const rows = visibleEmployees.map((e) => {
     const contractRows = contractMap.get(e.id) ?? [];
     const cWeek = contractForDate(contractRows, weekStartStr);
+    const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
     const plan = packShiftField(cells, e.id, ShiftLayer.PLAN, "rawValue");
     const actual = packShiftField(cells, e.id, ShiftLayer.ACTUAL, "rawValue");
     const planNotes = packShiftField(cells, e.id, ShiftLayer.PLAN, "note");
@@ -192,13 +205,15 @@ export async function GET(req: Request) {
       plan,
       weekStartStr,
       contractRows,
-      holidayKeys
+      holidayKeys,
+      employment
     );
     const wsAct = computeWeeklyBalanceWithContracts(
       actual,
       weekStartStr,
       contractRows,
-      holidayKeys
+      holidayKeys,
+      employment
     );
     const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
     const zagPreview = base + wsAct.deltaVsContract;
@@ -334,13 +349,15 @@ export async function PUT(req: Request) {
       const planArr = beforePlanArrays.get(e.id)!;
       const actualArr = beforeActualArrays.get(e.id)!;
       const rows = contractMapPut.get(e.id) ?? [];
+      const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
       beforeU.set(
         e.id,
         countVacationDaysInWeekWithPlanActual(
           planArr,
           actualArr,
           weekStartStrPut,
-          rows
+          rows,
+          employment
         )
       );
     }
@@ -412,11 +429,13 @@ export async function PUT(req: Request) {
           const planArr = afterPlanArrays.get(e.id)!;
           const actualArr = afterActualArrays.get(e.id)!;
           const rows = contractMapPut.get(e.id) ?? [];
+          const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
           const afterU = countVacationDaysInWeekWithPlanActual(
             planArr,
             actualArr,
             weekStartStrPut,
-            rows
+            rows,
+            employment
           );
           const before = beforeU.get(e.id) ?? 0;
           const delta = before - afterU;

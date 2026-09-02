@@ -3,9 +3,10 @@ import {
   type PrismaClient,
   VacationLedgerKind,
 } from "@prisma/client";
+import { contractForDate } from "@/lib/employeeContract";
 import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
 import {
-  annualVacationDaysProportional,
+  annualVacationDaysFromWorkDaysPerWeek,
   monthlyVacationAccrualFromAnnual,
   prismaDateToISO,
 } from "@/lib/vacationAccrualAT";
@@ -226,7 +227,9 @@ export async function applyMonthlyContractAccrualForEmployee(
   },
   periodYYYYMM: string
 ): Promise<{ posted: number; skipped: boolean }> {
-  if (!emp.active) return { posted: 0, skipped: true };
+  // Deaktivierte MA bekommen weiter Gutschriften bis zum Austrittstag (anteilig);
+  // ohne Austrittsdatum lässt sich nichts aliquotieren → überspringen.
+  if (!emp.active && !emp.exitDate) return { posted: 0, skipped: true };
 
   const pStart = periodStartISO(periodYYYYMM);
   if (emp.exitDate && prismaDateToISO(emp.exitDate) < pStart) {
@@ -253,10 +256,23 @@ export async function applyMonthlyContractAccrualForEmployee(
     return { posted: 0, skipped: true };
   }
 
-  const annual = annualVacationDaysProportional(
-    emp.workDaysPerWeek,
-    emp.contractHoursPerWeek
-  );
+  // Arbeitstage/Woche aus der Vertragshistorie des **Gutschrift-Monats**
+  // (Monatsletzter als Stichtag) — nicht aus dem heutigen Stammdaten-Cache.
+  const contractRowsDb = await tx.employeeContract.findMany({
+    where: { employeeId: emp.id },
+    orderBy: { effectiveFrom: "asc" },
+  });
+  const rows = contractRowsDb.map((r) => ({
+    effectiveFrom: prismaDateToISO(r.effectiveFrom),
+    contractHoursPerWeek: r.contractHoursPerWeek,
+    workDaysPerWeek: r.workDaysPerWeek,
+  }));
+  const workDaysForPeriod =
+    rows.length > 0
+      ? contractForDate(rows, lastDayISOOfMonth(periodYYYYMM)).workDaysPerWeek
+      : emp.workDaysPerWeek;
+
+  const annual = annualVacationDaysFromWorkDaysPerWeek(workDaysForPeriod);
   const baseMonth = monthlyVacationAccrualFromAnnual(annual);
   const exitISO = emp.exitDate ? prismaDateToISO(emp.exitDate) : null;
   const prorate = accrualCalendarProrateFactor(periodYYYYMM, openingISO, exitISO);
@@ -271,7 +287,7 @@ export async function applyMonthlyContractAccrualForEmployee(
     employeeId: emp.id,
     amount,
     kind: VacationLedgerKind.MONTHLY_CONTRACT_ACCRUAL,
-    note: `Monatsgutschrift ${periodYYYYMM} (5 Wo. × ${emp.workDaysPerWeek} AT/Wo = ${annual} T/Jahr ÷ 12${noteAnteil})`,
+    note: `Monatsgutschrift ${periodYYYYMM} (5 Wo. × ${workDaysForPeriod} AT/Wo = ${annual} T/Jahr ÷ 12${noteAnteil})`,
     effectiveDate: effNoon,
     accrualPeriod: periodYYYYMM,
   });
@@ -310,8 +326,9 @@ export async function processMonthlyVacationAccrualAll(
     };
   }
 
+  // Auch deaktivierte MA laden: sie bekommen bis zu ihrem Austrittstag
+  // anteilige Gutschriften (Filter in applyMonthlyContractAccrualForEmployee).
   const employees = await prisma.employee.findMany({
-    where: { active: true },
     select: { id: true },
   });
 

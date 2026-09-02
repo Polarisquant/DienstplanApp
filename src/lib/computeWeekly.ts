@@ -1,6 +1,9 @@
 import { sumParsedWeekHours, sumParsedWeekHoursWithContracts } from "./parseShiftCell";
 import type { ContractRow } from "./employeeContract";
-import { weeklyProRataTarget } from "./employeeContract";
+import {
+  type EmploymentBounds,
+  weeklyContractTargetForEmployment,
+} from "./employmentWeekTarget";
 
 /**
  * Wochenberechnung mit Vertrags-Historie (tagesgenauer Vertrag in der KW).
@@ -10,7 +13,9 @@ export function computeWeeklyBalanceWithContracts(
   weekStartISO: string,
   contractRows: ContractRow[],
   /** Gesetzliche Feiertage in dieser Woche (YYYY-MM-DD), für FT = Feiertagsentgelt-Stunden. */
-  publicHolidayDates?: ReadonlySet<string>
+  publicHolidayDates?: ReadonlySet<string>,
+  /** Mit Eintritt/Austritt: anteiliges Soll nur an beschäftigten Vertrags-Arbeitstagen. */
+  employment?: EmploymentBounds
 ): {
   weeklyHours: number;
   deltaVsContract: number;
@@ -20,9 +25,14 @@ export function computeWeeklyBalanceWithContracts(
     dayCells,
     weekStartISO,
     contractRows,
-    publicHolidayDates
+    publicHolidayDates,
+    employment
   );
-  const target = weeklyProRataTarget(contractRows, weekStartISO);
+  const target = weeklyContractTargetForEmployment(
+    contractRows,
+    weekStartISO,
+    employment
+  );
   return {
     weeklyHours: hours,
     deltaVsContract: hours - target,

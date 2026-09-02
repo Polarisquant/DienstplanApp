@@ -99,6 +99,44 @@ const fmtDec2 = new Intl.NumberFormat("de-AT", {
   maximumFractionDigits: 2,
 });
 
+type ConsistencyPayload = {
+  checkedAt: string;
+  employees: number;
+  issues: { employee: string; bereich: "urlaub" | "zeitkonto"; text: string }[];
+};
+
+type LedgerRow = {
+  dateISO: string;
+  label: string;
+  ui: "open" | "acc" | "cons" | "man";
+  note: string;
+  amount: number;
+  balanceAfter: number;
+};
+
+type LedgerPayload = {
+  employee: {
+    id: string;
+    name: string;
+    vacationDaysOpen: number;
+    annualVacationDays: number;
+    monthlyAccrual: number;
+  };
+  rows: LedgerRow[];
+  check: { ok: boolean; journalDiff: number; saldoDiff: number };
+};
+
+const LEDGER_CHIP: Record<LedgerRow["ui"], string> = {
+  open: "bg-slate-100 text-slate-700",
+  acc: "bg-emerald-50 text-emerald-800",
+  cons: "bg-pink-50 text-pink-800",
+  man: "bg-amber-50 text-amber-800",
+};
+
+function deDate(iso: string): string {
+  return iso.split("-").reverse().join(".");
+}
+
 export function MitarbeiterVerwaltung() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,6 +147,11 @@ export function MitarbeiterVerwaltung() {
   const [editForm, setEditForm] = useState<EmployeeFormState>(emptyForm);
   const [contractDeletingId, setContractDeletingId] = useState<string | null>(null);
   const [employeeDeletingId, setEmployeeDeletingId] = useState<string | null>(null);
+  const [consistency, setConsistency] = useState<ConsistencyPayload | null>(null);
+  const [ledgerOpenId, setLedgerOpenId] = useState<string | null>(null);
+  const [ledgerData, setLedgerData] = useState<LedgerPayload | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerShowAll, setLedgerShowAll] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,9 +167,48 @@ export function MitarbeiterVerwaltung() {
     }
   }, []);
 
+  const loadConsistency = useCallback(async () => {
+    try {
+      const res = await fetch("/api/consistency", { cache: "no-store" });
+      if (!res.ok) return;
+      setConsistency((await res.json()) as ConsistencyPayload);
+    } catch {
+      /* Abgleich ist optional — Seite bleibt nutzbar */
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadConsistency();
+  }, [load, loadConsistency]);
+
+  async function toggleLedger(empId: string) {
+    if (ledgerOpenId === empId) {
+      setLedgerOpenId(null);
+      setLedgerData(null);
+      return;
+    }
+    setLedgerOpenId(empId);
+    setLedgerData(null);
+    setLedgerShowAll(false);
+    setLedgerLoading(true);
+    try {
+      const res = await fetch(`/api/employees/${empId}/vacation-ledger`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        setMsg("Urlaubs-Verlauf konnte nicht geladen werden.");
+        setLedgerOpenId(null);
+        return;
+      }
+      setLedgerData((await res.json()) as LedgerPayload);
+    } catch {
+      setMsg("Urlaubs-Verlauf konnte nicht geladen werden.");
+      setLedgerOpenId(null);
+    } finally {
+      setLedgerLoading(false);
+    }
+  }
 
   async function createEmployee(e: React.FormEvent) {
     e.preventDefault();
@@ -376,6 +458,34 @@ export function MitarbeiterVerwaltung() {
 
       {msg && <p className="mb-3 text-sm text-slate-700">{msg}</p>}
 
+      {consistency && (
+        consistency.issues.length === 0 ? (
+          <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900">
+            <span aria-hidden>✓</span>
+            <span>
+              <strong>Alle Konten konsistent.</strong> Urlaubs-Journal = Dienstplan
+              und Zeitkonto = Wochenberechnung, geprüft für {consistency.employees}{" "}
+              Mitarbeiter ({new Date(consistency.checkedAt).toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" })} Uhr).
+            </span>
+          </div>
+        ) : (
+          <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-950">
+            <p className="font-semibold">
+              ⚠ {consistency.issues.length} Abweichung
+              {consistency.issues.length === 1 ? "" : "en"} zwischen Journal,
+              Dienstplan und Zeitkonto — bitte prüfen:
+            </p>
+            <ul className="mt-1 list-inside list-disc">
+              {consistency.issues.map((i, idx) => (
+                <li key={idx}>
+                  <strong>{i.employee}</strong>: {i.text}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      )}
+
       {creating && (
         <form
           onSubmit={createEmployee}
@@ -566,6 +676,13 @@ export function MitarbeiterVerwaltung() {
                         >
                           Bearbeiten
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => void toggleLedger(emp.id)}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-left text-sm text-emerald-700 hover:bg-emerald-50 md:border-0 md:p-0 md:hover:underline"
+                        >
+                          {ledgerOpenId === emp.id ? "Verlauf zuklappen" : "Urlaubs-Verlauf"}
+                        </button>
                         {emp.active ? (
                           <button
                             type="button"
@@ -596,6 +713,101 @@ export function MitarbeiterVerwaltung() {
                       </div>
                     </td>
                   </tr>
+                  {ledgerOpenId === emp.id && (
+                    <tr>
+                      <td colSpan={10} className="border border-slate-200 bg-emerald-50/30 p-4">
+                        {ledgerLoading || !ledgerData ? (
+                          <p className="text-sm text-slate-500">Lade Verlauf…</p>
+                        ) : (
+                          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 border-b border-slate-200 px-4 py-2.5">
+                              <span className="text-base font-bold text-slate-900">
+                                {ledgerData.employee.name}
+                              </span>
+                              <span className="text-xl font-extrabold tabular-nums text-slate-900">
+                                {fmtDec2.format(ledgerData.employee.vacationDaysOpen)}{" "}
+                                <span className="text-xs font-medium text-slate-500">Tage offen</span>
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                Jahresanspruch {fmtDec2.format(ledgerData.employee.annualVacationDays)} T ·
+                                Gutschrift {fmtDec2.format(ledgerData.employee.monthlyAccrual)} T/Monat
+                              </span>
+                              <span
+                                className={`ml-auto rounded-full border px-2.5 py-0.5 text-xs ${
+                                  ledgerData.check.ok
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                    : "border-amber-300 bg-amber-50 text-amber-900"
+                                }`}
+                              >
+                                {ledgerData.check.ok
+                                  ? "✓ Journal = Dienstplan"
+                                  : `⚠ Abweichung ${fmtDec2.format(Math.abs(ledgerData.check.journalDiff || ledgerData.check.saldoDiff))} T`}
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full border-collapse text-sm">
+                                <thead>
+                                  <tr className="text-left text-[11px] uppercase tracking-wide text-slate-500">
+                                    <th className="border-b-2 border-slate-300 px-4 py-2">Datum</th>
+                                    <th className="border-b-2 border-slate-300 px-4 py-2">Art</th>
+                                    <th className="border-b-2 border-slate-300 px-4 py-2">Grund</th>
+                                    <th className="border-b-2 border-slate-300 px-4 py-2 text-right">Tage</th>
+                                    <th className="border-b-2 border-slate-300 px-4 py-2 text-right">Saldo danach</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(ledgerShowAll
+                                    ? ledgerData.rows
+                                    : ledgerData.rows.slice(0, 10)
+                                  ).map((r, i) => (
+                                    <tr key={i} className="align-top">
+                                      <td className="border-b border-slate-100 px-4 py-1.5 whitespace-nowrap">
+                                        {deDate(r.dateISO)}
+                                      </td>
+                                      <td className="border-b border-slate-100 px-4 py-1.5">
+                                        <span
+                                          className={`inline-block rounded px-1.5 py-0.5 text-[11px] font-bold ${LEDGER_CHIP[r.ui]}`}
+                                        >
+                                          {r.label}
+                                        </span>
+                                      </td>
+                                      <td className="border-b border-slate-100 px-4 py-1.5 text-xs text-slate-600">
+                                        {r.note || "—"}
+                                      </td>
+                                      <td
+                                        className={`border-b border-slate-100 px-4 py-1.5 text-right font-semibold tabular-nums ${
+                                          r.amount >= 0 ? "text-emerald-700" : "text-rose-700"
+                                        }`}
+                                      >
+                                        {r.amount >= 0 ? "+" : ""}
+                                        {fmtDec2.format(r.amount)}
+                                      </td>
+                                      <td className="border-b border-slate-100 px-4 py-1.5 text-right tabular-nums">
+                                        {fmtDec2.format(r.balanceAfter)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {ledgerData.rows.length > 10 && (
+                              <div className="px-4 py-2 text-sm text-slate-500">
+                                <button
+                                  type="button"
+                                  className="rounded-lg border border-slate-300 px-2.5 py-1 text-sm text-slate-700 hover:bg-slate-50"
+                                  onClick={() => setLedgerShowAll((s) => !s)}
+                                >
+                                  {ledgerShowAll
+                                    ? "Weniger anzeigen"
+                                    : `Alle ${ledgerData.rows.length} Buchungen anzeigen`}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                   {editId === emp.id && (
                     <tr>
                       <td colSpan={10} className="border border-slate-200 bg-amber-50/50 p-4">

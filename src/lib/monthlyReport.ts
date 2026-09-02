@@ -5,7 +5,8 @@ import {
   parseShiftCellTotalHoursForDate,
   pauseMinutesFromRaw,
 } from "@/lib/parseShiftCell";
-import { vacationDayUnitsForDayPlanActual } from "@/lib/vacation";
+import { vacationDayUnitsForDate } from "@/lib/vacation";
+import { employmentBoundsFromDates, isEmployedCalendarDay } from "@/lib/employmentWeekTarget";
 import { contractForDate } from "@/lib/employeeContract";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
 import {
@@ -45,16 +46,18 @@ function weekIdsForEmployeeOnMonday(
   }
 }
 
-/** Soll pro Tag: erste N Wochentage (Mo=0 …) im Sinne „Mo zuerst“. */
+/**
+ * Soll pro Kalendertag: Sechstel-Regel — jeder Betriebstag (Mo–Sa) trägt
+ * Vertragsstunden ÷ 6, der Sonntag 0 (Betrieb geschlossen). Konsistent mit
+ * dem Wochensoll in `employmentWeekTarget.ts`.
+ */
 export function dailyContractHoursForDayIndex(
   dayIndexInWeek: number,
   contractHoursPerWeek: number,
-  workDaysPerWeek: number
+  _workDaysPerWeek: number
 ): number {
-  if (dayIndexInWeek < 0 || dayIndexInWeek > 6) return 0;
-  if (workDaysPerWeek <= 0) return 0;
-  if (dayIndexInWeek >= workDaysPerWeek) return 0;
-  return contractHoursPerWeek / workDaysPerWeek;
+  if (dayIndexInWeek < 0 || dayIndexInWeek > 5) return 0;
+  return contractHoursPerWeek / 6;
 }
 
 export function shiftCellDisplayParts(raw: string): {
@@ -333,6 +336,23 @@ export async function buildMonthlyReport(
 
   const short = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 
+  const employment = employmentBoundsFromDates(emp.entryDate, emp.exitDate);
+  /** Wochenweise Ist-Priorität pro (Woche, Standort): Ist-Zeile mit Inhalt schlägt Plan. */
+  const istRowContent = new Map<string, boolean>();
+  const istHas = (wid: string): boolean => {
+    const cached = istRowContent.get(wid);
+    if (cached !== undefined) return cached;
+    let has = false;
+    for (let i = 0; i < 7; i++) {
+      if ((rawLookup.get(`${wid}|${i}`)?.raw ?? "").trim() !== "") {
+        has = true;
+        break;
+      }
+    }
+    istRowContent.set(wid, has);
+    return has;
+  };
+
   for (const dayISO of days) {
     const ws = weekStartISOContainingDate(dayISO);
     const di = dayIndexInWeek(ws, dayISO);
@@ -358,35 +378,39 @@ export async function buildMonthlyReport(
     let dayHours = 0;
     let dayVacationUnits = 0;
     const cDay = contractForDate(contractRows, dayISO);
+    const employed = isEmployedCalendarDay(
+      dayISO,
+      employment.entryDateISO,
+      employment.exitDateISO
+    );
 
-    for (const wid of wids) {
-      const key = `${wid}|${di}`;
-      const planRaw = planRawLookup.get(key)?.raw ?? "";
-      const actualRaw = rawLookup.get(key)?.raw ?? "";
-      const vu = vacationDayUnitsForDayPlanActual(
-        planRaw,
-        actualRaw,
-        cDay.contractHoursPerWeek,
-        cDay.workDaysPerWeek
-      );
-      if (vu > 0) {
-        dayVacationUnits = vu;
-        const rawForVac =
-          actualRaw.replace(/\s+/g, " ").trim() !== "" ? actualRaw : planRaw;
-        dayHours += parseShiftCellTotalHours(
-          rawForVac,
-          cDay.contractHoursPerWeek,
-          cDay.workDaysPerWeek,
-          holidayDateSet.has(dayISO) ? { treatFtAsPaidHoliday: true } : undefined
-        );
-        break;
-      }
-    }
-    if (dayVacationUnits === 0) {
+    if (employed) {
       for (const wid of wids) {
-        const raw = rawLookup.get(`${wid}|${di}`)?.raw ?? "";
+        const key = `${wid}|${di}`;
+        const planRaw = planRawLookup.get(key)?.raw ?? "";
+        const actualRaw = rawLookup.get(key)?.raw ?? "";
+        const vacRaw = istHas(wid) ? actualRaw : planRaw;
+        const vu = vacationDayUnitsForDate(
+          vacRaw,
+          dayISO,
+          di,
+          contractRows,
+          employment
+        );
+        if (vu > 0) {
+          dayVacationUnits += vu;
+          dayHours += parseShiftCellTotalHours(
+            vacRaw,
+            cDay.contractHoursPerWeek,
+            cDay.workDaysPerWeek,
+            holidayDateSet.has(dayISO)
+              ? { treatFtAsPaidHoliday: true }
+              : undefined
+          );
+          continue;
+        }
         dayHours += parseShiftCellTotalHoursForDate(
-          raw,
+          rawLookup.get(key)?.raw ?? "",
           contractRows,
           dayISO,
           holidayDateSet
@@ -405,11 +429,13 @@ export async function buildMonthlyReport(
     }
     const pauseHours = dayPauseMin / 60;
 
-    const soll = dailyContractHoursForDayIndex(
-      di,
-      cDay.contractHoursPerWeek,
-      cDay.workDaysPerWeek
-    );
+    const soll = employed
+      ? dailyContractHoursForDayIndex(
+          di,
+          cDay.contractHoursPerWeek,
+          cDay.workDaysPerWeek
+        )
+      : 0;
     const ist = dayHours;
     const abw = ist - soll;
 
