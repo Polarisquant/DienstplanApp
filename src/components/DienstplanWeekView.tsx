@@ -29,11 +29,18 @@ import {
 } from "@/lib/computeWeekly";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
 import { contractForDate, type ContractRow } from "@/lib/employeeContract";
+import type { EmploymentBounds } from "@/lib/employmentWeekTarget";
 import {
   shiftAbbrevUiKind,
   type ShiftAbbrevUiKind,
 } from "@/lib/parseShiftCell";
+import { weekInputWarnings } from "@/lib/weekWarnings";
 import { WeekWeatherSkeleton, WeekWeatherStrip } from "@/components/WeekWeatherStrip";
+import {
+  requestAppFullscreen,
+  WeekOverviewPoster,
+  type OverviewRow,
+} from "@/components/WeekOverviewPoster";
 import { AppNavLinks } from "@/components/AppNavLinks";
 
 type Layer = "PLAN" | "ACTUAL";
@@ -110,6 +117,13 @@ function contractRowsForRow(r: RowDTO): ContractRow[] {
       workDaysPerWeek: r.employee.workDaysPerWeek,
     },
   ];
+}
+
+function employmentForRow(r: RowDTO): EmploymentBounds {
+  return {
+    entryDateISO: r.employee.entryDate ?? null,
+    exitDateISO: r.employee.exitDate ?? null,
+  };
 }
 
 /** Anzeige Mo…So: ein Wert oder „10/3T → 30/3T“ wenn die KW zwei Verträge trifft */
@@ -618,13 +632,15 @@ function vacationOpenPreview(
     r.plan,
     r.actual,
     weekStart,
-    cr
+    cr,
+    employmentForRow(r)
   );
   const live = countVacationDaysInWeekWithPlanActual(
     livePlan,
     liveActual,
     weekStart,
-    cr
+    cr,
+    employmentForRow(r)
   );
   return r.employee.vacationDaysOpen - (live - saved);
 }
@@ -737,6 +753,28 @@ export function DienstplanWeekView() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherErr, setWeatherErr] = useState<string | null>(null);
   const [hideSharedEmployees, setHideSharedEmployees] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [kontenCheck, setKontenCheck] = useState<{
+    issueCount: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch("/api/consistency?summary=1", {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!res.ok) return;
+        const j = (await res.json()) as { issueCount: number };
+        setKontenCheck({ issueCount: j.issueCount });
+      } catch {
+        /* Badge ist optional */
+      }
+    })();
+    return () => ac.abort();
+  }, []);
 
   /** Kalendertage mit gesetzlichem Feiertag (aus API) — für FT = Soll-Tag / Feiertagsentgelt. */
   const publicHolidayDates = useMemo(() => {
@@ -1118,7 +1156,17 @@ export function DienstplanWeekView() {
 
   async function closeWeek() {
     if (!data || data.status === "CLOSED") return;
-    if (!confirm("Woche wirklich abschließen? IST-Werte werden ins Zeitkonto übernommen.")) {
+    const weekEnd = addDaysISO(data.weekStart, 6);
+    const todayISO = new Date().toISOString().slice(0, 10);
+    const earlyWarn =
+      todayISO <= weekEnd
+        ? `⚠️ Diese Woche läuft noch bis ${weekEnd.split("-").reverse().join(".")}! Ändert sich danach noch etwas, muss die Woche wieder geöffnet und neu abgeschlossen werden.\n\n`
+        : "";
+    if (
+      !confirm(
+        `${earlyWarn}Woche wirklich abschließen? IST-Werte werden ins Zeitkonto übernommen.`
+      )
+    ) {
       return;
     }
     setSaving(true);
@@ -1272,7 +1320,8 @@ export function DienstplanWeekView() {
           plan,
           data.weekStart,
           cr,
-          publicHolidayDates
+          publicHolidayDates,
+          employmentForRow(r)
         );
         const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -1291,7 +1340,8 @@ export function DienstplanWeekView() {
           actual,
           data.weekStart,
           cr,
-          publicHolidayDates
+          publicHolidayDates,
+          employmentForRow(r)
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -1344,7 +1394,8 @@ export function DienstplanWeekView() {
           plan,
           data.weekStart,
           cr,
-          publicHolidayDates
+          publicHolidayDates,
+          employmentForRow(r)
         );
         const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -1367,7 +1418,8 @@ export function DienstplanWeekView() {
           actual,
           data.weekStart,
           cr,
-          publicHolidayDates
+          publicHolidayDates,
+          employmentForRow(r)
         );
         const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
@@ -1423,6 +1475,40 @@ export function DienstplanWeekView() {
   );
 
   useUniformRotaShiftFont(rotaTableWrapRef, rotaUniformTimeStrings, Boolean(data));
+
+  /** Zeilen für die Wochen-Übersicht (Vollbild-Poster zum Abfotografieren). */
+  const overviewRows = useMemo<OverviewRow[]>(() => {
+    if (!data || !overviewOpen) return [];
+    return displayRows.map((r) => {
+      const { plan, planNotes } = planCellsForRow(r, grid);
+      const { actual, actualNotes } = istCellsForRow(r, grid);
+      const cells = layer === "PLAN" ? plan : actual;
+      const notes = layer === "PLAN" ? planNotes : actualNotes;
+      const calc = computeWeeklyBalanceWithContracts(
+        cells,
+        data.weekStart,
+        contractRowsForRow(r),
+        publicHolidayDates,
+        employmentForRow(r)
+      );
+      return {
+        id: r.employee.id,
+        name: r.employee.name,
+        shared: r.employee.workSite === "SHARED",
+        entryDateISO: r.employee.entryDate ?? null,
+        exitDateISO: r.employee.exitDate ?? null,
+        cells: Array.from({ length: 7 }, (_, i) => cells[i] ?? ""),
+        notes: Array.from({ length: 7 }, (_, i) => notes[i] ?? ""),
+        weeklyHours: calc.weeklyHours,
+      };
+    });
+  }, [data, overviewOpen, displayRows, grid, layer, publicHolidayDates]);
+
+  /** Vollbild direkt aus der Klick-Geste anfordern (Browser verlangt das). */
+  function openOverview() {
+    void requestAppFullscreen();
+    setOverviewOpen(true);
+  }
 
   useEffect(() => {
     if (!laborOpenEmp) return;
@@ -1779,6 +1865,23 @@ export function DienstplanWeekView() {
                 {laborSummary.warnings === 1 ? "" : "e"}
               </span>
             )}
+            {kontenCheck &&
+              (kontenCheck.issueCount === 0 ? (
+                <span
+                  className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900"
+                  title="Dauer-Abgleich: Urlaubs-Journal = Dienstplan und Zeitkonto = Wochenberechnung"
+                >
+                  Konten ✓
+                </span>
+              ) : (
+                <a
+                  href="/mitarbeiter"
+                  className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950 hover:bg-amber-300"
+                  title="Abweichungen zwischen Journal, Dienstplan und Zeitkonto — Details auf der Mitarbeiter-Seite"
+                >
+                  Konten ⚠ {kontenCheck.issueCount}
+                </a>
+              ))}
           </span>
         )}
       </div>
@@ -1795,6 +1898,14 @@ export function DienstplanWeekView() {
         <>
           <div className="no-print mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-sm">
             <span className="text-sm font-medium text-slate-700">Export</span>
+            <button
+              type="button"
+              onClick={() => openOverview()}
+              className="rounded-lg bg-[var(--rota-header)] px-3 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-95 md:py-1.5"
+              title="Ganze Woche formatfüllend auf einem Bildschirm — zum Abfotografieren und Verschicken"
+            >
+              📷 Wochen-Übersicht
+            </button>
             <button
               type="button"
               onClick={() => handlePrint()}
@@ -1957,13 +2068,15 @@ export function DienstplanWeekView() {
                     planCells,
                     data.weekStart,
                     cr,
-                    publicHolidayDates
+                    publicHolidayDates,
+                    employmentForRow(r)
                   );
                   const liveActualCalc = computeWeeklyBalanceWithContracts(
                     actualCells,
                     data.weekStart,
                     cr,
-                    publicHolidayDates
+                    publicHolidayDates,
+                    employmentForRow(r)
                   );
                   const weeklyHoursShown =
                     layer === "PLAN"
@@ -2171,7 +2284,8 @@ export function DienstplanWeekView() {
                       plan,
                       data.weekStart,
                       crP,
-                      publicHolidayDates
+                      publicHolidayDates,
+                      employmentForRow(r)
                     );
                     const zagP = r.balanceBeforeWeek + livePlan.deltaVsContract;
                     const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
@@ -2225,7 +2339,8 @@ export function DienstplanWeekView() {
                     actual,
                     data.weekStart,
                     crI,
-                    publicHolidayDates
+                    publicHolidayDates,
+                    employmentForRow(r)
                   );
                   const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
                   const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
@@ -2314,6 +2429,7 @@ export function DienstplanWeekView() {
 
           <div className="no-print">
             {errsBlockLive(data, grid, layer, displayRows, publicHolidayDates)}
+            {warnsBlockLive(data, grid, displayRows, publicHolidayDates)}
           </div>
 
           <div className="no-print mt-4 flex flex-wrap gap-2">
@@ -2396,6 +2512,9 @@ export function DienstplanWeekView() {
               <strong>Feiertage &amp; Ferien</strong>. <strong>Notiz</strong> nur bei Bedarf:{" "}
               kleines <strong>+</strong> unten rechts in der Zelle, oder bereits gespeicherte Notiz — sonst volle Höhe
               für die Zeit.{" "}
+              <strong>Wochen-Übersicht</strong> (Export-Leiste) zeigt die ganze Woche formatfüllend
+              auf einem Bildschirm — die Schrift wird automatisch so groß wie möglich, ideal zum
+              Abfotografieren und Verschicken (Esc schließt).{" "}
               <strong>Soll → Ist übernehmen</strong> kopiert den gesamten Plan in die Ist-Zeilen.{" "}
               <strong>Vorwoche übernehmen</strong> lädt die vorige KW und überträgt Plan, Ist und
               Notizen (Mitarbeiter ohne Daten in der Vorwoche: leere Zeilen).{" "}
@@ -2407,6 +2526,25 @@ export function DienstplanWeekView() {
         </>
       )}
       </div>
+
+      {overviewOpen && data ? (
+        <WeekOverviewPoster
+          onClose={() => setOverviewOpen(false)}
+          weekStartISO={data.weekStart}
+          isoWeek={data.isoWeek}
+          siteLabel={workSiteLabel(data.site ?? workSite)}
+          layer={layer}
+          onLayerChange={setLayer}
+          days={data.days.map((d) => ({
+            dateISO: d.dateISO,
+            holidays: d.holidays,
+          }))}
+          rows={overviewRows}
+          hasUnsavedChanges={hasUnsavedChanges}
+          onPrevWeek={() => setWeekStart((sIso) => addDaysISO(sIso, -7))}
+          onNextWeek={() => setWeekStart((sIso) => addDaysISO(sIso, 7))}
+        />
+      ) : null}
 
       {hasUnsavedChanges && !readOnly && !loading && (
         <div
@@ -2441,6 +2579,39 @@ export function DienstplanWeekView() {
   );
 }
 
+/** Nicht-blockierende Hinweise (Sonntag, U am Feiertag, U-Überzahl, FT ohne Feiertag). */
+function warnsBlockLive(
+  data: WeekPayload,
+  grid: Record<string, GridRow>,
+  rows: WeekPayload["rows"],
+  publicHolidayDates: ReadonlySet<string>
+) {
+  const lines = rows.flatMap((r) => {
+    const g = grid[r.employee.id];
+    const plan = g?.plan ?? r.plan;
+    const actual = g?.actual ?? r.actual;
+    return weekInputWarnings(
+      plan,
+      actual,
+      data.weekStart,
+      contractRowsForRow(r),
+      employmentForRow(r),
+      publicHolidayDates
+    ).map((w) => `${r.employee.name}: ${w}`);
+  });
+  if (lines.length === 0) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      <p className="font-medium">Hinweise (blockieren nicht)</p>
+      <ul className="mt-1 list-inside list-disc">
+        {lines.map((l, i) => (
+          <li key={i}>{l}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function errsBlockLive(
   data: WeekPayload,
   grid: Record<string, GridRow>,
@@ -2458,7 +2629,8 @@ function errsBlockLive(
       cells,
       data.weekStart,
       contractRowsForRow(r),
-      publicHolidayDates
+      publicHolidayDates,
+      employmentForRow(r)
     );
     return errors.map((x) => `${r.employee.name}: ${x}`);
   });
