@@ -68,8 +68,8 @@ export function lineHoldsSoll(source: string): boolean {
  * `base` = Startsaldo + alle abgeschlossenen Wochen vor dieser KW (beide Standorte)
  *        + bereits gebuchte Zeile der **anderen** Filiale in dieser KW.
  * `sollAlreadyBooked` = diese Zeile der anderen Filiale enthält das Wochensoll schon.
- * `otherOpenWeekId` = die andere Filiale hat diese KW noch offen — deren Stunden rechnet der
- * Aufrufer live dazu, damit beide Dienstpläne denselben ZAG zeigen.
+ * `otherWeek` = Woche der anderen Filiale (falls angelegt) — ist sie noch offen, rechnet der
+ * Aufrufer deren Stunden live dazu, damit beide Dienstpläne denselben ZAG zeigen.
  */
 export async function getSharedBalancesForWeek(
   employees: { id: string; startBalanceHours: number }[],
@@ -77,7 +77,7 @@ export async function getSharedBalancesForWeek(
   site: WorkSite
 ): Promise<{
   byEmployee: Map<string, { base: number; sollAlreadyBooked: boolean }>;
-  otherOpenWeekId: string | null;
+  otherWeek: { id: string; closed: boolean } | null;
 }> {
   const byEmployee = new Map<string, { base: number; sollAlreadyBooked: boolean }>();
   for (const e of employees) {
@@ -89,10 +89,10 @@ export async function getSharedBalancesForWeek(
     select: { id: true, status: true },
   });
   const otherClosed = otherWeek?.status === WeekStatus.CLOSED;
-  const otherOpenWeekId = otherWeek && !otherClosed ? otherWeek.id : null;
+  const otherWeekInfo = otherWeek ? { id: otherWeek.id, closed: otherClosed } : null;
 
   const ids = employees.map((e) => e.id);
-  if (ids.length === 0) return { byEmployee, otherOpenWeekId };
+  if (ids.length === 0) return { byEmployee, otherWeek: otherWeekInfo };
 
   const [before, otherThisWeek] = await Promise.all([
     prisma.timeAccountLine.groupBy({
@@ -121,7 +121,7 @@ export async function getSharedBalancesForWeek(
     cur.base += l.weeklyDeltaHours;
     cur.sollAlreadyBooked = lineHoldsSoll(l.source);
   }
-  return { byEmployee, otherOpenWeekId };
+  return { byEmployee, otherWeek: otherWeekInfo };
 }
 
 /** Kontostand vor dieser Kalenderwoche am gewählten Standort (nach abgeschlossenen Vorperioden). */

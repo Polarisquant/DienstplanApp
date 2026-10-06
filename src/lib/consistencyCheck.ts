@@ -12,7 +12,11 @@ import {
   employeeVisibleInWeek,
   employmentBoundsFromDates,
 } from "@/lib/employmentWeekTarget";
-import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
+import {
+  countedCellsForSite,
+  countVacationDaysCalendarWeek,
+  type PlanActual,
+} from "@/lib/sharedSite";
 
 /** Buchungs-Notiz der einmaligen Systemkorrektur — zählt rechnerisch zur Verbrauchsseite. */
 export const SYSTEMKORREKTUR_NOTE =
@@ -77,6 +81,8 @@ export async function runConsistencyCheck(
   }
   const lineMap = new Map<string, (typeof lines)[number]>();
   for (const l of lines) lineMap.set(`${l.employeeId}|${l.workWeekId}`, l);
+  const weekBySiteStart = new Map<string, (typeof weeks)[number]>();
+  for (const w of weeks) weekBySiteStart.set(`${w.site}|${iso(w.weekStart)}`, w);
   const closedWeekBySiteStart = new Map<string, (typeof weeks)[number]>();
   for (const w of closedWeeks) closedWeekBySiteStart.set(`${w.site}|${iso(w.weekStart)}`, w);
   const siteName = (s: WorkSite) => (s === WorkSite.CRUSH ? "Crush" : "CappuCone");
@@ -104,9 +110,17 @@ export async function runConsistencyCheck(
     for (const w of closedWeeks) {
       const ws = iso(w.weekStart);
       const stored = lineMap.get(`${e.id}|${w.id}`);
-      const actual =
+      const actualRaw =
         cellMap.get(cellKey(w.id, e.id, ShiftLayer.ACTUAL)) ?? Array(7).fill("");
-      const hasCells = actual.some((c: string) => c.trim() !== "");
+      const hasCells = actualRaw.some((c: string) => c.trim() !== "");
+      // U/K/FT am selben Tag an beiden Filialen zählt nur einmal (bei Crush).
+      const crushWeekSame =
+        w.site === WorkSite.CAPPUCONE ? weekBySiteStart.get(`${WorkSite.CRUSH}|${iso(w.weekStart)}`) : undefined;
+      const actual = countedCellsForSite(
+        actualRaw,
+        w.site === WorkSite.CAPPUCONE ? "CAPPUCONE" : "CRUSH",
+        crushWeekSame ? cellMap.get(cellKey(crushWeekSame.id, e.id, ShiftLayer.ACTUAL)) : undefined
+      );
       if (!stored && !hasCells) continue;
 
       if (!employeeVisibleInWeek(ws, entryISO, exitISO)) {
@@ -226,26 +240,23 @@ export async function runConsistencyCheck(
       );
       const openingISO = openingRow ? iso(openingRow.effectiveDate) : null;
 
+      // Kalenderwoche über beide Filialen (U am selben Tag nur einmal, Crush zählt).
       let consNew = 0;
-      for (const w of weeks) {
-        const ws = iso(w.weekStart);
+      const weekStarts = Array.from(new Set(weeks.map((w) => iso(w.weekStart))));
+      for (const ws of weekStarts) {
         if (openingISO && ws < openingISO.slice(0, 8) + "01") continue;
-        const plan =
-          cellMap.get(cellKey(w.id, e.id, ShiftLayer.PLAN)) ?? Array(7).fill("");
-        const actual =
-          cellMap.get(cellKey(w.id, e.id, ShiftLayer.ACTUAL)) ?? Array(7).fill("");
-        if (
-          !plan.some((c: string) => c.trim()) &&
-          !actual.some((c: string) => c.trim())
-        )
-          continue;
-        consNew += countVacationDaysInWeekWithPlanActual(
-          plan,
-          actual,
-          ws,
-          rows,
-          employment
-        );
+        const pa = (site: WorkSite): PlanActual | null => {
+          const w = weekBySiteStart.get(`${site}|${ws}`);
+          if (!w) return null;
+          const plan = cellMap.get(cellKey(w.id, e.id, ShiftLayer.PLAN)) ?? Array(7).fill("");
+          const actual = cellMap.get(cellKey(w.id, e.id, ShiftLayer.ACTUAL)) ?? Array(7).fill("");
+          if (!plan.some((c: string) => c.trim()) && !actual.some((c: string) => c.trim())) return null;
+          return { plan, actual };
+        };
+        const crush = pa(WorkSite.CRUSH);
+        const cap = pa(WorkSite.CAPPUCONE);
+        if (!crush && !cap) continue;
+        consNew += countVacationDaysCalendarWeek(crush, cap, ws, rows, employment);
       }
 
       const diff = consSide + consNew; // Verbrauchsseite soll −consNew sein

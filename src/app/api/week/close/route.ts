@@ -23,6 +23,7 @@ import {
   whereLaterClosedWeek,
   workSiteLabel,
 } from "@/lib/workSite";
+import { countedCellsForSite } from "@/lib/sharedSite";
 import { z } from "zod";
 
 /** Soll-Verrechnungs-Marker für geteilte Mitarbeiter (Soll genau einmal pro KW). */
@@ -156,6 +157,21 @@ export async function POST(req: Request) {
       where: { weekStart_site: { weekStart: weekStart, site: otherSite } },
     });
 
+    // U/K/FT am selben Tag an beiden Filialen zählt nur einmal (bei Crush):
+    // CappuCone bucht solche Tage mit 0.
+    const crushActualByEmp = new Map<string, string[]>();
+    if (site === WorkSite.CAPPUCONE && otherWeek) {
+      const crushCells = await prisma.shiftCell.findMany({
+        where: { workWeekId: otherWeek.id, layer: ShiftLayer.ACTUAL },
+        select: { employeeId: true, dayIndex: true, rawValue: true },
+      });
+      for (const c of crushCells) {
+        const arr = crushActualByEmp.get(c.employeeId) ?? Array(7).fill("");
+        arr[c.dayIndex] = c.rawValue;
+        crushActualByEmp.set(c.employeeId, arr);
+      }
+    }
+
     await prisma.$transaction(async (tx) => {
       for (const e of employees) {
         const entryISO = e.entryDate ? e.entryDate.toISOString().slice(0, 10) : null;
@@ -167,7 +183,11 @@ export async function POST(req: Request) {
           continue;
         }
 
-        const arr = actualByEmp.get(e.id) ?? Array(7).fill("");
+        const arr = countedCellsForSite(
+          actualByEmp.get(e.id) ?? Array(7).fill(""),
+          site === WorkSite.CAPPUCONE ? "CAPPUCONE" : "CRUSH",
+          crushActualByEmp.get(e.id)
+        );
         const rows = contractMapClose.get(e.id) ?? [];
         const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
         const { weeklyHours, deltaVsContract } = computeWeeklyBalanceWithContracts(

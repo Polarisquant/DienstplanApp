@@ -3,6 +3,7 @@ import { EmployeeSite, ShiftLayer, WorkSite } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { parseShiftCellTotalHoursChecked, shiftAbbrevUiKind } from "@/lib/parseShiftCell";
 import { vacationDayUnitsForDate } from "@/lib/vacation";
+import { countedCellForSite } from "@/lib/sharedSite";
 import { employmentBoundsFromDates, isEmployedCalendarDay } from "@/lib/employmentWeekTarget";
 import { contractForDate } from "@/lib/employeeContract";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
@@ -202,11 +203,22 @@ export async function GET(req: Request) {
         }
 
         const cDay = contractForDate(rowsC, day);
+        // Geteilt: U/K/FT am selben Tag an beiden Filialen zählt nur einmal (bei Crush).
+        const crushWid = pair?.crush && wids.includes(pair.crush) ? pair.crush : undefined;
+        const crushKey = crushWid ? `${crushWid}|${e.id}|${di}` : "";
+        const crushActualRaw = crushWid ? actualLookup.get(crushKey) ?? "" : undefined;
+        const crushVacRaw = crushWid
+          ? istHas(crushWid)
+            ? crushActualRaw
+            : planLookup.get(crushKey) ?? ""
+          : undefined;
+        const counted = (wid: string, raw: string, crushRaw: string | undefined) =>
+          wid === crushWid ? raw : countedCellForSite(raw, "CAPPUCONE", crushRaw);
         for (const wid of wids) {
           const key = `${wid}|${e.id}|${di}`;
           const planRaw = planLookup.get(key) ?? "";
-          const actualRaw = actualLookup.get(key) ?? "";
-          const vacRaw = istHas(wid) ? actualRaw : planRaw;
+          const actualRaw = counted(wid, actualLookup.get(key) ?? "", crushActualRaw);
+          const vacRaw = counted(wid, istHas(wid) ? actualLookup.get(key) ?? "" : planRaw, crushVacRaw);
           const vu = vacationDayUnitsForDate(vacRaw, day, di, rowsC, employment);
           if (vu > 0) {
             vacationDays += vu;

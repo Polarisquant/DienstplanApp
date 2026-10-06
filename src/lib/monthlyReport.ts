@@ -6,6 +6,7 @@ import {
   pauseMinutesFromRaw,
 } from "@/lib/parseShiftCell";
 import { vacationDayUnitsForDate } from "@/lib/vacation";
+import { countedCellForSite } from "@/lib/sharedSite";
 import { employmentBoundsFromDates, isEmployedCalendarDay } from "@/lib/employmentWeekTarget";
 import { contractForDate } from "@/lib/employeeContract";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
@@ -365,11 +366,23 @@ export async function buildMonthlyReport(
       pair?.cappucone
     );
 
+    // Geteilt: U/K/FT am selben Tag an beiden Filialen zählt nur einmal (bei Crush).
+    const crushWid = pair?.crush && wids.includes(pair.crush) ? pair.crush : undefined;
+    const crushActualRaw = crushWid ? rawLookup.get(`${crushWid}|${di}`)?.raw ?? "" : undefined;
+    const crushVacRaw = crushWid
+      ? istHas(crushWid)
+        ? crushActualRaw
+        : planRawLookup.get(`${crushWid}|${di}`)?.raw ?? ""
+      : undefined;
+    const counted = (wid: string, raw: string, crushRaw: string | undefined) =>
+      wid === crushWid ? raw : countedCellForSite(raw, "CAPPUCONE", crushRaw);
+
     const raws: string[] = [];
     const notes: string[] = [];
     for (const wid of wids) {
       const cell = rawLookup.get(`${wid}|${di}`);
-      if (cell?.raw) raws.push(cell.raw);
+      const raw = counted(wid, cell?.raw ?? "", crushActualRaw);
+      if (raw) raws.push(raw);
       if (cell?.note) notes.push(cell.note);
     }
     const combinedRaw = raws.join(" | ");
@@ -389,7 +402,7 @@ export async function buildMonthlyReport(
         const key = `${wid}|${di}`;
         const planRaw = planRawLookup.get(key)?.raw ?? "";
         const actualRaw = rawLookup.get(key)?.raw ?? "";
-        const vacRaw = istHas(wid) ? actualRaw : planRaw;
+        const vacRaw = counted(wid, istHas(wid) ? actualRaw : planRaw, crushVacRaw);
         const vu = vacationDayUnitsForDate(
           vacRaw,
           dayISO,
@@ -410,7 +423,7 @@ export async function buildMonthlyReport(
           continue;
         }
         dayHours += parseShiftCellTotalHoursForDate(
-          rawLookup.get(key)?.raw ?? "",
+          counted(wid, actualRaw, crushActualRaw),
           contractRows,
           dayISO,
           holidayDateSet

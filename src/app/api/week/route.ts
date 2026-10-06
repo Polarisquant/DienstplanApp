@@ -37,6 +37,16 @@ import {
   employmentBoundsFromDates,
 } from "@/lib/employmentWeekTarget";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
+import {
+  countedCellsForSite,
+  countVacationDaysCalendarWeek,
+  isAbsenceCell,
+  mixedDayIndexes,
+  otherSiteKey,
+  type PlanActual,
+  type SiteKey,
+  siteKeyLabel,
+} from "@/lib/sharedSite";
 import { openingEffectiveDateForEmployee } from "@/lib/vacationCutover";
 import {
   appendVacationLedger,
@@ -192,41 +202,34 @@ export async function GET(req: Request) {
     site
   );
   const sharedEmployees = employees.filter((e) => e.workSite === EmployeeSite.SHARED);
-  const { byEmployee: sharedBalanceByEmp, otherOpenWeekId } =
-    await getSharedBalancesForWeek(
-      sharedEmployees.map((e) => ({ id: e.id, startBalanceHours: e.startBalanceHours })),
-      start,
-      site
-    );
+  const { byEmployee: sharedBalanceByEmp, otherWeek } = await getSharedBalancesForWeek(
+    sharedEmployees.map((e) => ({ id: e.id, startBalanceHours: e.startBalanceHours })),
+    start,
+    site
+  );
 
   const contractMap = await contractRowsMapForEmployees(employees.map((e) => e.id));
 
-  // Geteilt + andere Filiale hat die KW noch offen: deren Plan/Ist-Stunden live
-  // mitzählen (ohne Soll), damit beide Dienstpläne denselben ZAG zeigen.
-  const otherOpenHoursByEmp = new Map<string, { plan: number; actual: number }>();
-  if (otherOpenWeekId && sharedEmployees.length > 0) {
+  // Geteilt: Zellen der anderen Filiale in dieser KW — für „U/K/FT nur einmal“,
+  // und (solange dort offen) deren Stunden live im ZAG, damit beide Dienstpläne
+  // denselben Wert zeigen.
+  const ownSiteKey: SiteKey = site === WorkSite.CAPPUCONE ? "CAPPUCONE" : "CRUSH";
+  const otherCellsByEmp = new Map<string, PlanActual>();
+  if (otherWeek && sharedEmployees.length > 0) {
     const otherCells = await prisma.shiftCell.findMany({
       where: {
-        workWeekId: otherOpenWeekId,
+        workWeekId: otherWeek.id,
         employeeId: { in: sharedEmployees.map((e) => e.id) },
       },
       select: { employeeId: true, dayIndex: true, layer: true, rawValue: true },
     });
     for (const e of sharedEmployees) {
-      const plan = Array(7).fill("");
-      const actual = Array(7).fill("");
+      const pa: PlanActual = { plan: Array(7).fill(""), actual: Array(7).fill("") };
       for (const c of otherCells) {
         if (c.employeeId !== e.id) continue;
-        (c.layer === ShiftLayer.PLAN ? plan : actual)[c.dayIndex] = c.rawValue;
+        (c.layer === ShiftLayer.PLAN ? pa.plan : pa.actual)[c.dayIndex] = c.rawValue;
       }
-      const rowsE = contractMap.get(e.id) ?? [];
-      const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
-      otherOpenHoursByEmp.set(e.id, {
-        plan: computeWeeklyBalanceWithContracts(plan, weekStartStr, rowsE, holidayKeys, employment)
-          .weeklyHours,
-        actual: computeWeeklyBalanceWithContracts(actual, weekStartStr, rowsE, holidayKeys, employment)
-          .weeklyHours,
-      });
+      otherCellsByEmp.set(e.id, pa);
     }
   }
 
@@ -246,15 +249,16 @@ export async function GET(req: Request) {
     const actual = packShiftField(cells, e.id, ShiftLayer.ACTUAL, "rawValue");
     const planNotes = packShiftField(cells, e.id, ShiftLayer.PLAN, "note");
     const actualNotes = packShiftField(cells, e.id, ShiftLayer.ACTUAL, "note");
+    const other = otherCellsByEmp.get(e.id);
     const wsPlan = computeWeeklyBalanceWithContracts(
-      plan,
+      countedCellsForSite(plan, ownSiteKey, other?.plan),
       weekStartStr,
       contractRows,
       holidayKeys,
       employment
     );
     const wsAct = computeWeeklyBalanceWithContracts(
-      actual,
+      countedCellsForSite(actual, ownSiteKey, other?.actual),
       weekStartStr,
       contractRows,
       holidayKeys,
@@ -263,10 +267,19 @@ export async function GET(req: Request) {
     const shared = sharedBalanceByEmp.get(e.id);
     const base = shared?.base ?? balanceByEmp.get(e.id) ?? e.startBalanceHours;
     const sollAlreadyBooked = shared?.sollAlreadyBooked ?? false;
-    const otherSiteOpenHours = otherOpenHoursByEmp.get(e.id);
+    const otherOpenActual =
+      other && otherWeek && !otherWeek.closed
+        ? computeWeeklyBalanceWithContracts(
+            countedCellsForSite(other.actual, otherSiteKey(ownSiteKey), actual),
+            weekStartStr,
+            contractRows,
+            holidayKeys,
+            employment
+          ).weeklyHours
+        : 0;
     const zagPreview =
       base +
-      (otherSiteOpenHours?.actual ?? 0) +
+      otherOpenActual +
       (sollAlreadyBooked ? wsAct.weeklyHours : wsAct.deltaVsContract);
     return {
       employee: {
@@ -290,7 +303,10 @@ export async function GET(req: Request) {
       errorsActual: wsAct.errors,
       balanceBeforeWeek: base,
       sollAlreadyBooked,
-      otherSiteOpenHours,
+      /** Geteilt: Zellen der anderen Filiale (gleiche KW) + ob sie dort schon abgeschlossen ist. */
+      otherSite: other
+        ? { site: otherSiteKey(ownSiteKey), ...other, closed: otherWeek?.closed ?? false }
+        : undefined,
       zagPreview,
       /** Für Ruhezeit So→Mo: Sonntag Vorwoche (Client berechnet Hinweise live aus Grid) */
       prevSundayPlan: prevSundayByEmpPlan.get(e.id) ?? null,
@@ -397,21 +413,116 @@ export async function PUT(req: Request) {
       const arr = beforeActualArrays.get(c.employeeId);
       if (arr) arr[c.dayIndex] = c.rawValue;
     }
-    const beforeU = new Map<string, number>();
-    for (const e of employees) {
-      const planArr = beforePlanArrays.get(e.id)!;
-      const actualArr = beforeActualArrays.get(e.id)!;
+
+    // ---- Geteilte Mitarbeiter: Zellen der anderen Filiale dieser KW ----
+    const ownSiteKey: SiteKey = site === WorkSite.CAPPUCONE ? "CAPPUCONE" : "CRUSH";
+    const sharedIds = employees
+      .filter((e) => e.workSite === EmployeeSite.SHARED)
+      .map((e) => e.id);
+    const otherWeekPut = await prisma.workWeek.findUnique({
+      where: {
+        weekStart_site: {
+          weekStart: start,
+          site: site === WorkSite.CRUSH ? WorkSite.CAPPUCONE : WorkSite.CRUSH,
+        },
+      },
+      select: { id: true, status: true },
+    });
+    const otherByEmp = new Map<string, PlanActual>();
+    if (otherWeekPut && sharedIds.length > 0) {
+      const oc = await prisma.shiftCell.findMany({
+        where: { workWeekId: otherWeekPut.id, employeeId: { in: sharedIds } },
+        select: { employeeId: true, dayIndex: true, layer: true, rawValue: true },
+      });
+      for (const id of sharedIds) {
+        otherByEmp.set(id, { plan: Array(7).fill(""), actual: Array(7).fill("") });
+      }
+      for (const c of oc) {
+        const pa = otherByEmp.get(c.employeeId);
+        if (pa) (c.layer === ShiftLayer.PLAN ? pa.plan : pa.actual)[c.dayIndex] = c.rawValue;
+      }
+    }
+
+    // Sperren für geteilte Mitarbeiter (nur geänderte Zellen prüfen):
+    // 1. Mischtag U/K + Dienst über beide Filialen.
+    // 2. Crush ändert U/K/FT an einem Tag, an dem die schon abgeschlossene
+    //    CappuCone-Woche auch U/K/FT hat — sonst stimmt deren Buchung nicht mehr.
+    const nameById = new Map(employees.map((e) => [e.id, e.name]));
+    const otherLabel = siteKeyLabel(otherSiteKey(ownSiteKey));
+    const dayDe = (i: number) =>
+      addDaysISO(weekStartStrPut, i).split("-").reverse().slice(0, 2).join(".") + ".";
+    const sharedBlockers: string[] = [];
+    for (const c of body.cells) {
+      const other = otherByEmp.get(c.employeeId);
+      if (!other) continue;
+      const before =
+        (c.layer === "PLAN" ? beforePlanArrays : beforeActualArrays).get(c.employeeId)?.[
+          c.dayIndex
+        ] ?? "";
+      if (before.trim() === c.rawValue.trim()) continue;
+      const otherCell = (c.layer === "PLAN" ? other.plan : other.actual)[c.dayIndex] ?? "";
+      const nm = nameById.get(c.employeeId) ?? "";
+      const layerDe = c.layer === "PLAN" ? "Plan" : "Ist";
+      const own = Array(7).fill("");
+      own[c.dayIndex] = c.rawValue;
+      const ot = Array(7).fill("");
+      ot[c.dayIndex] = otherCell;
+      if (mixedDayIndexes(own, ot).length > 0) {
+        sharedBlockers.push(
+          `${nm}, ${dayDe(c.dayIndex)} (${layerDe}): Urlaub/Krank und Dienst am selben Tag — bei ${otherLabel} steht „${otherCell.trim()}“.`
+        );
+      }
+      if (
+        ownSiteKey === "CRUSH" &&
+        c.layer === "ACTUAL" &&
+        otherWeekPut?.status === WeekStatus.CLOSED &&
+        isAbsenceCell(otherCell) &&
+        isAbsenceCell(before) !== isAbsenceCell(c.rawValue)
+      ) {
+        sharedBlockers.push(
+          `${nm}, ${dayDe(c.dayIndex)}: Bei CappuCone (Woche abgeschlossen) steht „${otherCell.trim()}“ — U/K/FT hier nur ändern, nachdem die CappuCone-Woche wieder geöffnet ist.`
+        );
+      }
+    }
+    if (sharedBlockers.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Speichern nicht möglich — geteilte Mitarbeiter:\n${sharedBlockers.join("\n")}`,
+        },
+        { status: 400 }
+      );
+    }
+
+    /** Urlaubstage dieser Woche; geteilt: ganze Kalenderwoche beider Filialen (U nur einmal). */
+    const vacationUnits = (
+      e: (typeof employees)[number],
+      own: PlanActual
+    ): number => {
       const rows = contractMapPut.get(e.id) ?? [];
       const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
-      beforeU.set(
-        e.id,
-        countVacationDaysInWeekWithPlanActual(
-          planArr,
-          actualArr,
+      const other = otherByEmp.get(e.id);
+      if (!other) {
+        return countVacationDaysInWeekWithPlanActual(
+          own.plan,
+          own.actual,
           weekStartStrPut,
           rows,
           employment
-        )
+        );
+      }
+      return ownSiteKey === "CRUSH"
+        ? countVacationDaysCalendarWeek(own, other, weekStartStrPut, rows, employment)
+        : countVacationDaysCalendarWeek(other, own, weekStartStrPut, rows, employment);
+    };
+
+    const beforeU = new Map<string, number>();
+    for (const e of employees) {
+      beforeU.set(
+        e.id,
+        vacationUnits(e, {
+          plan: beforePlanArrays.get(e.id)!,
+          actual: beforeActualArrays.get(e.id)!,
+        })
       );
     }
 
@@ -479,17 +590,10 @@ export async function PUT(req: Request) {
           }
         }
         for (const e of employees) {
-          const planArr = afterPlanArrays.get(e.id)!;
-          const actualArr = afterActualArrays.get(e.id)!;
-          const rows = contractMapPut.get(e.id) ?? [];
-          const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
-          const afterU = countVacationDaysInWeekWithPlanActual(
-            planArr,
-            actualArr,
-            weekStartStrPut,
-            rows,
-            employment
-          );
+          const afterU = vacationUnits(e, {
+            plan: afterPlanArrays.get(e.id)!,
+            actual: afterActualArrays.get(e.id)!,
+          });
           const before = beforeU.get(e.id) ?? 0;
           const delta = before - afterU;
           if (delta !== 0) {

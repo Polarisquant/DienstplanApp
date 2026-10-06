@@ -28,6 +28,13 @@ import {
   computeWeeklyBalanceWithContracts,
 } from "@/lib/computeWeekly";
 import { countVacationDaysInWeekWithPlanActual } from "@/lib/vacation";
+import {
+  countedCellsForSite,
+  countVacationDaysCalendarWeek,
+  otherSiteKey,
+  sharedDayMessages,
+  type SiteKey,
+} from "@/lib/sharedSite";
 import { contractForDate, type ContractRow } from "@/lib/employeeContract";
 import type { EmploymentBounds } from "@/lib/employmentWeekTarget";
 import {
@@ -101,8 +108,8 @@ type RowDTO = {
   balanceBeforeWeek: number;
   /** Geteilt: Wochensoll wurde an der anderen Filiale schon abgezogen → hier zählt nur das Ist. */
   sollAlreadyBooked?: boolean;
-  /** Geteilt: Stunden der anderen Filiale in dieser KW, solange sie dort noch offen ist (ohne Soll). */
-  otherSiteOpenHours?: { plan: number; actual: number };
+  /** Geteilt: Zellen der anderen Filiale in dieser KW (U/K/FT nur einmal; offen → Stunden live im ZAG). */
+  otherSite?: { site: SiteKey; plan: string[]; actual: string[]; closed: boolean };
   zagPreview: number;
   prevSundayPlan: string | null;
   prevSundayActual: string | null;
@@ -110,22 +117,45 @@ type RowDTO = {
   contractRows?: ContractRow[];
 };
 
-/** ZAG wie beim Wochenabschluss gebucht: Soll bei geteilten Mitarbeitern nur einmal pro KW. */
-function zagForRow(
+/**
+ * Wochenrechnung einer Zeile wie beim Wochenabschluss: bei geteilten Mitarbeitern
+ * U/K/FT am selben Tag nur einmal (Crush zählt), Soll einmal pro KW, ZAG = Gesamtsaldo
+ * beider Filialen (offene Woche der anderen Filiale live mitgezählt).
+ */
+function liveCalcForRow(
   r: RowDTO,
-  calc: { weeklyHours: number; deltaVsContract: number },
-  layer: "PLAN" | "ACTUAL"
-): number {
-  const otherOpen = r.otherSiteOpenHours
-    ? layer === "PLAN"
-      ? r.otherSiteOpenHours.plan
-      : r.otherSiteOpenHours.actual
-    : 0;
-  return (
+  cells: string[],
+  layer: "PLAN" | "ACTUAL",
+  weekStart: string,
+  publicHolidayDates: ReadonlySet<string>
+): ReturnType<typeof computeWeeklyBalanceWithContracts> & { zag: number } {
+  const o = r.otherSite;
+  const otherCells = o ? (layer === "PLAN" ? o.plan : o.actual) : undefined;
+  const ownSite = o ? otherSiteKey(o.site) : "CRUSH";
+  const cr = contractRowsForRow(r);
+  const emp = employmentForRow(r);
+  const calc = computeWeeklyBalanceWithContracts(
+    countedCellsForSite(cells, ownSite, otherCells),
+    weekStart,
+    cr,
+    publicHolidayDates,
+    emp
+  );
+  const otherOpen =
+    o && otherCells && !o.closed
+      ? computeWeeklyBalanceWithContracts(
+          countedCellsForSite(otherCells, o.site, cells),
+          weekStart,
+          cr,
+          publicHolidayDates,
+          emp
+        ).weeklyHours
+      : 0;
+  const zag =
     r.balanceBeforeWeek +
     otherOpen +
-    (r.sollAlreadyBooked ? calc.weeklyHours : calc.deltaVsContract)
-  );
+    (r.sollAlreadyBooked ? calc.weeklyHours : calc.deltaVsContract);
+  return { ...calc, zag };
 }
 
 function contractRowsForRow(r: RowDTO): ContractRow[] {
@@ -651,20 +681,20 @@ function vacationOpenPreview(
 ): number {
   const { plan: livePlan } = planCellsForRow(r, grid);
   const { actual: liveActual } = istCellsForRow(r, grid);
-  const saved = countVacationDaysInWeekWithPlanActual(
-    r.plan,
-    r.actual,
-    weekStart,
-    cr,
-    employmentForRow(r)
-  );
-  const live = countVacationDaysInWeekWithPlanActual(
-    livePlan,
-    liveActual,
-    weekStart,
-    cr,
-    employmentForRow(r)
-  );
+  const o = r.otherSite;
+  const count = (plan: string[], actual: string[]) => {
+    if (!o) {
+      return countVacationDaysInWeekWithPlanActual(plan, actual, weekStart, cr, employmentForRow(r));
+    }
+    // Geteilt: ganze Kalenderwoche beider Filialen, U am selben Tag nur einmal.
+    const own = { plan, actual };
+    const other = { plan: o.plan, actual: o.actual };
+    return o.site === "CAPPUCONE"
+      ? countVacationDaysCalendarWeek(own, other, weekStart, cr, employmentForRow(r))
+      : countVacationDaysCalendarWeek(other, own, weekStart, cr, employmentForRow(r));
+  };
+  const saved = count(r.plan, r.actual);
+  const live = count(livePlan, liveActual);
   return r.employee.vacationDaysOpen - (live - saved);
 }
 
@@ -1339,14 +1369,8 @@ export function DienstplanWeekView() {
       if (isPlan) {
         const { plan, planNotes } = planCellsForRow(r, grid);
         const cr = contractRowsForRow(r);
-        const livePlan = computeWeeklyBalanceWithContracts(
-          plan,
-          data.weekStart,
-          cr,
-          publicHolidayDates,
-          employmentForRow(r)
-        );
-        const zag = zagForRow(r, livePlan, "PLAN");
+        const livePlan = liveCalcForRow(r, plan, "PLAN", data.weekStart, publicHolidayDates);
+        const zag = livePlan.zag;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
@@ -1359,14 +1383,8 @@ export function DienstplanWeekView() {
       } else {
         const { actual, actualNotes } = istCellsForRow(r, grid);
         const cr = contractRowsForRow(r);
-        const liveActual = computeWeeklyBalanceWithContracts(
-          actual,
-          data.weekStart,
-          cr,
-          publicHolidayDates,
-          employmentForRow(r)
-        );
-        const zag = zagForRow(r, liveActual, "ACTUAL");
+        const liveActual = liveCalcForRow(r, actual, "ACTUAL", data.weekStart, publicHolidayDates);
+        const zag = liveActual.zag;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
@@ -1413,14 +1431,8 @@ export function DienstplanWeekView() {
       if (isPlan) {
         const { plan, planNotes } = planCellsForRow(r, grid);
         const cr = contractRowsForRow(r);
-        const livePlan = computeWeeklyBalanceWithContracts(
-          plan,
-          data.weekStart,
-          cr,
-          publicHolidayDates,
-          employmentForRow(r)
-        );
-        const zag = zagForRow(r, livePlan, "PLAN");
+        const livePlan = liveCalcForRow(r, plan, "PLAN", data.weekStart, publicHolidayDates);
+        const zag = livePlan.zag;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (plan[i] ?? "").trim();
@@ -1437,14 +1449,8 @@ export function DienstplanWeekView() {
       } else {
         const { actual, actualNotes } = istCellsForRow(r, grid);
         const cr = contractRowsForRow(r);
-        const liveActual = computeWeeklyBalanceWithContracts(
-          actual,
-          data.weekStart,
-          cr,
-          publicHolidayDates,
-          employmentForRow(r)
-        );
-        const zag = zagForRow(r, liveActual, "ACTUAL");
+        const liveActual = liveCalcForRow(r, actual, "ACTUAL", data.weekStart, publicHolidayDates);
+        const zag = liveActual.zag;
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (actual[i] ?? "").trim();
@@ -1507,13 +1513,7 @@ export function DienstplanWeekView() {
       const { actual, actualNotes } = istCellsForRow(r, grid);
       const cells = layer === "PLAN" ? plan : actual;
       const notes = layer === "PLAN" ? planNotes : actualNotes;
-      const calc = computeWeeklyBalanceWithContracts(
-        cells,
-        data.weekStart,
-        contractRowsForRow(r),
-        publicHolidayDates,
-        employmentForRow(r)
-      );
+      const calc = liveCalcForRow(r, cells, layer, data.weekStart, publicHolidayDates);
       return {
         id: r.employee.id,
         name: r.employee.name,
@@ -2087,28 +2087,16 @@ export function DienstplanWeekView() {
                   const displayCells = layer === "PLAN" ? planCells : actualCells;
                   const displayNotes = layer === "PLAN" ? planNotes : actualNotes;
                   const cr = contractRowsForRow(r);
-                  const livePlanCalc = computeWeeklyBalanceWithContracts(
-                    planCells,
-                    data.weekStart,
-                    cr,
-                    publicHolidayDates,
-                    employmentForRow(r)
-                  );
-                  const liveActualCalc = computeWeeklyBalanceWithContracts(
-                    actualCells,
-                    data.weekStart,
-                    cr,
-                    publicHolidayDates,
-                    employmentForRow(r)
-                  );
+                  const livePlanCalc = liveCalcForRow(r, planCells, "PLAN", data.weekStart, publicHolidayDates);
+                  const liveActualCalc = liveCalcForRow(r, actualCells, "ACTUAL", data.weekStart, publicHolidayDates);
                   const weeklyHoursShown =
                     layer === "PLAN"
                       ? livePlanCalc.weeklyHours
                       : liveActualCalc.weeklyHours;
                   const zagLive =
                     layer === "PLAN"
-                      ? zagForRow(r, livePlanCalc, "PLAN")
-                      : zagForRow(r, liveActualCalc, "ACTUAL");
+                      ? livePlanCalc.zag
+                      : liveActualCalc.zag;
                   const vacationShown = vacationOpenPreview(
                     r,
                     grid,
@@ -2308,14 +2296,8 @@ export function DienstplanWeekView() {
                   if (layer === "PLAN") {
                     const { plan, planNotes } = planCellsForRow(r, grid);
                     const crP = contractRowsForRow(r);
-                    const livePlan = computeWeeklyBalanceWithContracts(
-                      plan,
-                      data.weekStart,
-                      crP,
-                      publicHolidayDates,
-                      employmentForRow(r)
-                    );
-                    const zagP = zagForRow(r, livePlan, "PLAN");
+                    const livePlan = liveCalcForRow(r, plan, "PLAN", data.weekStart, publicHolidayDates);
+                    const zagP = livePlan.zag;
                     const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
                     return (
                       <tr key={`print-${r.employee.id}`}>
@@ -2363,14 +2345,8 @@ export function DienstplanWeekView() {
                   }
                   const { actual, actualNotes } = istCellsForRow(r, grid);
                   const crI = contractRowsForRow(r);
-                  const liveActual = computeWeeklyBalanceWithContracts(
-                    actual,
-                    data.weekStart,
-                    crI,
-                    publicHolidayDates,
-                    employmentForRow(r)
-                  );
-                  const zagP = zagForRow(r, liveActual, "ACTUAL");
+                  const liveActual = liveCalcForRow(r, actual, "ACTUAL", data.weekStart, publicHolidayDates);
+                  const zagP = liveActual.zag;
                   const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
                   return (
                     <tr key={`print-${r.employee.id}`}>
@@ -2618,14 +2594,28 @@ function warnsBlockLive(
     const g = grid[r.employee.id];
     const plan = g?.plan ?? r.plan;
     const actual = g?.actual ?? r.actual;
-    return weekInputWarnings(
-      plan,
-      actual,
-      data.weekStart,
-      contractRowsForRow(r),
-      employmentForRow(r),
-      publicHolidayDates
-    ).map((w) => `${r.employee.name}: ${w}`);
+    const o = r.otherSite;
+    const shared = o
+      ? [
+          ...sharedDayMessages(actual, o.actual, otherSiteKey(o.site), data.weekStart).warnings.map(
+            (w) => `${w} (Ist)`
+          ),
+          ...sharedDayMessages(plan, o.plan, otherSiteKey(o.site), data.weekStart).warnings.map(
+            (w) => `${w} (Plan)`
+          ),
+        ]
+      : [];
+    return [
+      ...weekInputWarnings(
+        plan,
+        actual,
+        data.weekStart,
+        contractRowsForRow(r),
+        employmentForRow(r),
+        publicHolidayDates
+      ),
+      ...shared,
+    ].map((w) => `${r.employee.name}: ${w}`);
   });
   if (lines.length === 0) return null;
   return (
@@ -2660,7 +2650,16 @@ function errsBlockLive(
       publicHolidayDates,
       employmentForRow(r)
     );
-    return errors.map((x) => `${r.employee.name}: ${x}`);
+    const o = r.otherSite;
+    const sharedErrors = o
+      ? sharedDayMessages(
+          cells,
+          layer === "PLAN" ? o.plan : o.actual,
+          otherSiteKey(o.site),
+          data.weekStart
+        ).errors
+      : [];
+    return [...errors, ...sharedErrors].map((x) => `${r.employee.name}: ${x}`);
   });
   if (lines.length === 0) return null;
   return (
