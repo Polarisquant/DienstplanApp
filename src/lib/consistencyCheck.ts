@@ -5,6 +5,7 @@ import {
   WeekStatus,
   WorkSite,
 } from "@prisma/client";
+import { lineHoldsSoll, TIME_SOURCE_NOSOLL } from "@/lib/balance";
 import { computeWeeklyBalanceWithContracts } from "@/lib/computeWeekly";
 import type { ContractRow } from "@/lib/employeeContract";
 import {
@@ -76,6 +77,9 @@ export async function runConsistencyCheck(
   }
   const lineMap = new Map<string, (typeof lines)[number]>();
   for (const l of lines) lineMap.set(`${l.employeeId}|${l.workWeekId}`, l);
+  const closedWeekBySiteStart = new Map<string, (typeof weeks)[number]>();
+  for (const w of closedWeeks) closedWeekBySiteStart.set(`${w.site}|${iso(w.weekStart)}`, w);
+  const siteName = (s: WorkSite) => (s === WorkSite.CRUSH ? "Crush" : "CappuCone");
 
   const issues: ConsistencyIssue[] = [];
 
@@ -122,27 +126,58 @@ export async function runConsistencyCheck(
           return iso(d);
         }).filter((d) => holidaySet.has(d))
       );
-      const { deltaVsContract } = computeWeeklyBalanceWithContracts(
+      const { weeklyHours, deltaVsContract } = computeWeeklyBalanceWithContracts(
         actual,
         ws,
         rows,
         holidayKeys,
         employment
       );
+
+      // Wochensoll genau einmal pro KW (Wochenabschluss markiert die Zeilen;
+      // alles außer NOSOLL enthält das Soll) — die NOSOLL-Filiale bucht nur Ist.
+      const otherSite = w.site === WorkSite.CRUSH ? WorkSite.CAPPUCONE : WorkSite.CRUSH;
+      const otherWeek = closedWeekBySiteStart.get(`${otherSite}|${ws}`);
+      const otherLine = otherWeek ? lineMap.get(`${e.id}|${otherWeek.id}`) : undefined;
+      const otherHoldsSoll = !!otherLine && lineHoldsSoll(otherLine.source);
+      const ohneSoll = stored ? stored.source === TIME_SOURCE_NOSOLL : otherHoldsSoll;
+      const expected = ohneSoll ? weeklyHours : deltaVsContract;
+
       const storedDelta = stored?.weeklyDeltaHours;
       if (storedDelta === undefined) {
-        if (Math.abs(deltaVsContract) > 0.02) {
+        if (Math.abs(expected) > 0.02) {
           issues.push({
             employee: e.name,
             bereich: "zeitkonto",
-            text: `KW ${deDate(ws)} (${w.site === WorkSite.CRUSH ? "Crush" : "CappuCone"}) ist abgeschlossen, aber nicht gebucht (berechnet ${f2(deltaVsContract)} h).`,
+            text: `KW ${deDate(ws)} (${siteName(w.site)}) ist abgeschlossen, aber nicht gebucht (berechnet ${f2(expected)} h).`,
           });
         }
-      } else if (Math.abs(deltaVsContract - storedDelta) > 0.02) {
+      } else if (Math.abs(expected - storedDelta) > 0.02) {
         issues.push({
           employee: e.name,
           bereich: "zeitkonto",
-          text: `Zeitkonto KW ${deDate(ws)} weicht ${f2(Math.abs(deltaVsContract - storedDelta))} h von der Neuberechnung ab (gebucht ${f2(storedDelta)}, berechnet ${f2(deltaVsContract)}).`,
+          text: `Zeitkonto KW ${deDate(ws)} (${siteName(w.site)}) weicht ${f2(Math.abs(expected - storedDelta))} h von der Neuberechnung ab (gebucht ${f2(storedDelta)}, berechnet ${f2(expected)}).`,
+        });
+      }
+
+      if (!stored) continue;
+      // Soll-Verrechnung über beide Filialen prüfen (nur einmal je KW melden).
+      if (stored.source === TIME_SOURCE_NOSOLL && !otherHoldsSoll) {
+        issues.push({
+          employee: e.name,
+          bereich: "zeitkonto",
+          text: `KW ${deDate(ws)}: ${siteName(w.site)} hat nur das Ist gebucht, aber an ${siteName(otherSite)} ist kein Wochensoll abgezogen${otherWeek ? "" : " (Woche dort nicht abgeschlossen)"} — Soll fehlt (${f2(weeklyHours - deltaVsContract)} h).`,
+        });
+      } else if (
+        w.site === WorkSite.CRUSH &&
+        otherHoldsSoll &&
+        lineHoldsSoll(stored.source) &&
+        Math.abs(deltaVsContract - weeklyHours) > 0.02
+      ) {
+        issues.push({
+          employee: e.name,
+          bereich: "zeitkonto",
+          text: `KW ${deDate(ws)}: Wochensoll an beiden Filialen abgezogen (doppelt, ${f2(weeklyHours - deltaVsContract)} h zu viel Minus).`,
         });
       }
     }
@@ -158,7 +193,7 @@ export async function runConsistencyCheck(
           issues.push({
             employee: e.name,
             bereich: "zeitkonto",
-            text: `Salden-Kette ${site === WorkSite.CRUSH ? "Crush" : "CappuCone"} bricht in KW ${deDate(iso(w.weekStart))} (gespeichert ${f2(l.balanceAfter)}, erwartet ${f2(bal)}).`,
+            text: `Salden-Kette ${siteName(site)} bricht in KW ${deDate(iso(w.weekStart))} (gespeichert ${f2(l.balanceAfter)}, erwartet ${f2(bal)}).`,
           });
           break;
         }

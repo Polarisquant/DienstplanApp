@@ -97,13 +97,36 @@ type RowDTO = {
   wsActual: number;
   errorsPlan: string[];
   errorsActual: string[];
+  /** ZAG-Basis; bei geteilten Mitarbeitern Gesamtsaldo beider Filialen (inkl. bereits gebuchter Zeile der anderen Filiale). */
   balanceBeforeWeek: number;
+  /** Geteilt: Wochensoll wurde an der anderen Filiale schon abgezogen → hier zählt nur das Ist. */
+  sollAlreadyBooked?: boolean;
+  /** Geteilt: Stunden der anderen Filiale in dieser KW, solange sie dort noch offen ist (ohne Soll). */
+  otherSiteOpenHours?: { plan: number; actual: number };
   zagPreview: number;
   prevSundayPlan: string | null;
   prevSundayActual: string | null;
   /** Vertrags-Historie (für Wechsel mitten in der KW) */
   contractRows?: ContractRow[];
 };
+
+/** ZAG wie beim Wochenabschluss gebucht: Soll bei geteilten Mitarbeitern nur einmal pro KW. */
+function zagForRow(
+  r: RowDTO,
+  calc: { weeklyHours: number; deltaVsContract: number },
+  layer: "PLAN" | "ACTUAL"
+): number {
+  const otherOpen = r.otherSiteOpenHours
+    ? layer === "PLAN"
+      ? r.otherSiteOpenHours.plan
+      : r.otherSiteOpenHours.actual
+    : 0;
+  return (
+    r.balanceBeforeWeek +
+    otherOpen +
+    (r.sollAlreadyBooked ? calc.weeklyHours : calc.deltaVsContract)
+  );
+}
 
 function contractRowsForRow(r: RowDTO): ContractRow[] {
   if (r.contractRows && r.contractRows.length > 0) return r.contractRows;
@@ -1323,7 +1346,7 @@ export function DienstplanWeekView() {
           publicHolidayDates,
           employmentForRow(r)
         );
-        const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
+        const zag = zagForRow(r, livePlan, "PLAN");
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
@@ -1343,7 +1366,7 @@ export function DienstplanWeekView() {
           publicHolidayDates,
           employmentForRow(r)
         );
-        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const zag = zagForRow(r, liveActual, "ACTUAL");
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         row = [
           escapeCsvField(label),
@@ -1397,7 +1420,7 @@ export function DienstplanWeekView() {
           publicHolidayDates,
           employmentForRow(r)
         );
-        const zag = r.balanceBeforeWeek + livePlan.deltaVsContract;
+        const zag = zagForRow(r, livePlan, "PLAN");
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (plan[i] ?? "").trim();
@@ -1421,7 +1444,7 @@ export function DienstplanWeekView() {
           publicHolidayDates,
           employmentForRow(r)
         );
-        const zag = r.balanceBeforeWeek + liveActual.deltaVsContract;
+        const zag = zagForRow(r, liveActual, "ACTUAL");
         const vacPrev = vacationOpenPreview(r, grid, data.weekStart, cr);
         const dayParts = data.days.map((d, i) => {
           const cell = (actual[i] ?? "").trim();
@@ -2084,8 +2107,8 @@ export function DienstplanWeekView() {
                       : liveActualCalc.weeklyHours;
                   const zagLive =
                     layer === "PLAN"
-                      ? r.balanceBeforeWeek + livePlanCalc.deltaVsContract
-                      : r.balanceBeforeWeek + liveActualCalc.deltaVsContract;
+                      ? zagForRow(r, livePlanCalc, "PLAN")
+                      : zagForRow(r, liveActualCalc, "ACTUAL");
                   const vacationShown = vacationOpenPreview(
                     r,
                     grid,
@@ -2188,9 +2211,14 @@ export function DienstplanWeekView() {
                           zagLive < 0 ? "text-red-700" : "text-slate-900"
                         }`}
                         title={
-                          layer === "PLAN"
+                          (layer === "PLAN"
                             ? "Vorschau: Saldo vor Woche + (Plan-Summe − Vertragssoll)"
-                            : "Saldo vor Woche + (Ist-Summe − Vertragssoll)"
+                            : "Saldo vor Woche + (Ist-Summe − Vertragssoll)") +
+                          (r.employee.workSite === "SHARED"
+                            ? r.sollAlreadyBooked
+                              ? " · Geteilt: Gesamtsaldo beider Filialen; Wochensoll schon an der anderen Filiale abgezogen, hier zählt nur das Ist."
+                              : " · Geteilt: Gesamtsaldo beider Filialen; Wochensoll wird einmal pro KW abgezogen."
+                            : "")
                         }
                       >
                         {fmt.format(zagLive)}
@@ -2287,7 +2315,7 @@ export function DienstplanWeekView() {
                       publicHolidayDates,
                       employmentForRow(r)
                     );
-                    const zagP = r.balanceBeforeWeek + livePlan.deltaVsContract;
+                    const zagP = zagForRow(r, livePlan, "PLAN");
                     const vacPrev = vacationOpenPreview(r, grid, data.weekStart, crP);
                     return (
                       <tr key={`print-${r.employee.id}`}>
@@ -2342,7 +2370,7 @@ export function DienstplanWeekView() {
                     publicHolidayDates,
                     employmentForRow(r)
                   );
-                  const zagP = r.balanceBeforeWeek + liveActual.deltaVsContract;
+                  const zagP = zagForRow(r, liveActual, "ACTUAL");
                   const vacPrevI = vacationOpenPreview(r, grid, data.weekStart, crI);
                   return (
                     <tr key={`print-${r.employee.id}`}>

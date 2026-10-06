@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { ShiftLayer, VacationLedgerKind, WeekStatus, WorkSite } from "@prisma/client";
+import {
+  EmployeeSite,
+  ShiftLayer,
+  VacationLedgerKind,
+  WeekStatus,
+  WorkSite,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { addDaysISO } from "@/lib/dateNav";
 import { buildHolidayMap } from "@/lib/holidays";
@@ -22,7 +28,10 @@ import {
   contractRowsMapForEmployees,
   normalizePlaceholderContractsAll,
 } from "@/lib/employeeContractLoad";
-import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
+import {
+  getBalancesBeforeWeekForEmployees,
+  getSharedBalancesForWeek,
+} from "@/lib/balance";
 import {
   employeeVisibleInWeek,
   employmentBoundsFromDates,
@@ -182,8 +191,44 @@ export async function GET(req: Request) {
     start,
     site
   );
+  const sharedEmployees = employees.filter((e) => e.workSite === EmployeeSite.SHARED);
+  const { byEmployee: sharedBalanceByEmp, otherOpenWeekId } =
+    await getSharedBalancesForWeek(
+      sharedEmployees.map((e) => ({ id: e.id, startBalanceHours: e.startBalanceHours })),
+      start,
+      site
+    );
 
   const contractMap = await contractRowsMapForEmployees(employees.map((e) => e.id));
+
+  // Geteilt + andere Filiale hat die KW noch offen: deren Plan/Ist-Stunden live
+  // mitzählen (ohne Soll), damit beide Dienstpläne denselben ZAG zeigen.
+  const otherOpenHoursByEmp = new Map<string, { plan: number; actual: number }>();
+  if (otherOpenWeekId && sharedEmployees.length > 0) {
+    const otherCells = await prisma.shiftCell.findMany({
+      where: {
+        workWeekId: otherOpenWeekId,
+        employeeId: { in: sharedEmployees.map((e) => e.id) },
+      },
+      select: { employeeId: true, dayIndex: true, layer: true, rawValue: true },
+    });
+    for (const e of sharedEmployees) {
+      const plan = Array(7).fill("");
+      const actual = Array(7).fill("");
+      for (const c of otherCells) {
+        if (c.employeeId !== e.id) continue;
+        (c.layer === ShiftLayer.PLAN ? plan : actual)[c.dayIndex] = c.rawValue;
+      }
+      const rowsE = contractMap.get(e.id) ?? [];
+      const employment = employmentBoundsFromDates(e.entryDate, e.exitDate);
+      otherOpenHoursByEmp.set(e.id, {
+        plan: computeWeeklyBalanceWithContracts(plan, weekStartStr, rowsE, holidayKeys, employment)
+          .weeklyHours,
+        actual: computeWeeklyBalanceWithContracts(actual, weekStartStr, rowsE, holidayKeys, employment)
+          .weeklyHours,
+      });
+    }
+  }
 
   const visibleEmployees = employees.filter((e) =>
     employeeVisibleInWeek(
@@ -215,8 +260,14 @@ export async function GET(req: Request) {
       holidayKeys,
       employment
     );
-    const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
-    const zagPreview = base + wsAct.deltaVsContract;
+    const shared = sharedBalanceByEmp.get(e.id);
+    const base = shared?.base ?? balanceByEmp.get(e.id) ?? e.startBalanceHours;
+    const sollAlreadyBooked = shared?.sollAlreadyBooked ?? false;
+    const otherSiteOpenHours = otherOpenHoursByEmp.get(e.id);
+    const zagPreview =
+      base +
+      (otherSiteOpenHours?.actual ?? 0) +
+      (sollAlreadyBooked ? wsAct.weeklyHours : wsAct.deltaVsContract);
     return {
       employee: {
         id: e.id,
@@ -238,6 +289,8 @@ export async function GET(req: Request) {
       errorsPlan: wsPlan.errors,
       errorsActual: wsAct.errors,
       balanceBeforeWeek: base,
+      sollAlreadyBooked,
+      otherSiteOpenHours,
       zagPreview,
       /** Für Ruhezeit So→Mo: Sonntag Vorwoche (Client berechnet Hinweise live aus Grid) */
       prevSundayPlan: prevSundayByEmpPlan.get(e.id) ?? null,

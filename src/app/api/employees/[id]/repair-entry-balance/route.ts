@@ -12,6 +12,7 @@ import {
 import { buildHolidayMap } from "@/lib/holidays";
 import { holidayDateKeysFromMap } from "@/lib/schoolBreaks";
 import { VacationLedgerKind } from "@prisma/client";
+import { TIME_SOURCE_NOSOLL } from "@/lib/balance";
 
 type Params = { params: { id: string } };
 
@@ -89,33 +90,40 @@ export async function POST(req: Request, context: Params) {
         const arr = Array(7).fill("");
         for (const c of cellsDb) arr[c.dayIndex] = c.rawValue;
 
-        const { deltaVsContract } = computeWeeklyBalanceWithContracts(
+        const { weeklyHours, deltaVsContract } = computeWeeklyBalanceWithContracts(
           arr,
           weekStartISO,
           contractRows,
           holidayKeys,
           employment
         );
-        balance += deltaVsContract;
+        // Soll-Marker (geteilte Mitarbeiter) beibehalten: NOSOLL-Zeilen buchen nur Ist,
+        // sonst würde das Wochensoll ein zweites Mal abgezogen.
+        const existing = await tx.timeAccountLine.findUnique({
+          where: { employeeId_workWeekId: { employeeId, workWeekId: ww.id } },
+          select: { source: true },
+        });
+        const source = existing?.source ?? "IST_CLOSED";
+        const delta = source === TIME_SOURCE_NOSOLL ? weeklyHours : deltaVsContract;
+        balance += delta;
 
         await tx.timeAccountLine.upsert({
           where: { employeeId_workWeekId: { employeeId, workWeekId: ww.id } },
           create: {
             employeeId,
             workWeekId: ww.id,
-            weeklyDeltaHours: deltaVsContract,
+            weeklyDeltaHours: delta,
             balanceAfter: balance,
-            source: "IST_CLOSED",
+            source,
           },
           update: {
-            weeklyDeltaHours: deltaVsContract,
+            weeklyDeltaHours: delta,
             balanceAfter: balance,
-            source: "IST_CLOSED",
           },
         });
         recalculated.push({
           weekStart: weekStartISO,
-          delta: deltaVsContract,
+          delta,
           balanceAfter: balance,
         });
       }

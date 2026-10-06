@@ -7,7 +7,12 @@ import { holidayDateKeysFromMap } from "@/lib/schoolBreaks";
 import { parseWeekStartParam, formatWeekStart } from "@/lib/weekUtils";
 import { computeWeeklyBalanceWithContracts } from "@/lib/computeWeekly";
 import { contractRowsMapForEmployees } from "@/lib/employeeContractLoad";
-import { getBalancesBeforeWeekForEmployees } from "@/lib/balance";
+import {
+  getBalancesBeforeWeekForEmployees,
+  lineHoldsSoll,
+  TIME_SOURCE_NOSOLL,
+  TIME_SOURCE_SOLL,
+} from "@/lib/balance";
 import {
   employeeVisibleInWeek,
   employmentBoundsFromDates,
@@ -22,8 +27,8 @@ import { z } from "zod";
 
 /** Soll-Verrechnungs-Marker für geteilte Mitarbeiter (Soll genau einmal pro KW). */
 const SOURCE_DEFAULT = "IST_CLOSED";
-const SOURCE_SOLL = "IST_CLOSED_SOLL";
-const SOURCE_NOSOLL = "IST_CLOSED_NOSOLL";
+const SOURCE_SOLL = TIME_SOURCE_SOLL;
+const SOURCE_NOSOLL = TIME_SOURCE_NOSOLL;
 
 const bodySchema = z.object({
   start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -173,27 +178,27 @@ export async function POST(req: Request) {
           employment
         );
 
+        // Wochensoll genau einmal pro Kalenderwoche: Jede Zeile der anderen
+        // Filiale außer NOSOLL enthält bereits das Soll — auch Alt-Buchungen
+        // (IST_CLOSED) aus der Zeit vor dem Marker oder vor einem Wechsel auf
+        // „Geteilt“. Gilt daher unabhängig vom aktuellen Standort.
         let delta = deltaVsContract;
-        let source = SOURCE_DEFAULT;
-        if (e.workSite === EmployeeSite.SHARED) {
-          const otherLine =
-            otherWeek && otherWeek.status === WeekStatus.CLOSED
-              ? await tx.timeAccountLine.findUnique({
-                  where: {
-                    employeeId_workWeekId: {
-                      employeeId: e.id,
-                      workWeekId: otherWeek.id,
-                    },
+        let source =
+          e.workSite === EmployeeSite.SHARED ? SOURCE_SOLL : SOURCE_DEFAULT;
+        const otherLine =
+          otherWeek && otherWeek.status === WeekStatus.CLOSED
+            ? await tx.timeAccountLine.findUnique({
+                where: {
+                  employeeId_workWeekId: {
+                    employeeId: e.id,
+                    workWeekId: otherWeek.id,
                   },
-                })
-              : null;
-          const sollBereitsVerrechnet = otherLine?.source === SOURCE_SOLL;
-          if (sollBereitsVerrechnet) {
-            delta = weeklyHours;
-            source = SOURCE_NOSOLL;
-          } else {
-            source = SOURCE_SOLL;
-          }
+                },
+              })
+            : null;
+        if (otherLine && lineHoldsSoll(otherLine.source)) {
+          delta = weeklyHours;
+          source = SOURCE_NOSOLL;
         }
 
         const base = balanceByEmp.get(e.id) ?? e.startBalanceHours;
